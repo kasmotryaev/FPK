@@ -1715,6 +1715,8 @@ def import_view():
     current_q = get_setting(conn, "current_quarter_label") or compute_quarter_label(datetime.date.today())
     next_q = next_quarter_label(current_q)
     q_options = quarter_options(current_q)
+    ts_rp_filter = get_setting(conn, "ts_rp_filter") or ""
+    ts_pc_filter = get_setting(conn, "ts_pc_filter") or ""
     conn.close()
     return render_template(
         "import.html",
@@ -1722,6 +1724,8 @@ def import_view():
         current_quarter_label=current_q,
         next_quarter_label=next_q,
         quarter_option_list=q_options,
+        ts_rp_filter=ts_rp_filter,
+        ts_pc_filter=ts_pc_filter,
     )
 
 
@@ -2849,7 +2853,7 @@ def _ts_build_compare(import_id, conn, emp_names=None, fp_quarter_labels=None):
             }
 
     # ── Строим иерархию с финансовыми данными ────────────────────────────────
-    hierarchy, total_hours = _ts_build_hierarchy(all_rows, emp_names=emp_names, proj_finance=proj_finance)
+    hierarchy, total_hours = _ts_build_compare_hier(all_rows, emp_names=emp_names, proj_finance=proj_finance)
 
     matched_hours = sum(
         ts_agg[p]["hours"] for p in ts_agg if p.lower() in proj_finance
@@ -2887,10 +2891,124 @@ def _ts_build_compare(import_id, conn, emp_names=None, fp_quarter_labels=None):
         rows_no_mine   = [r for r in all_rows if (r["project"] or "—") in no_mine_projs]
         rows_less_mine = [r for r in all_rows if (r["project"] or "—") in less_mine_projs]
 
-        hierarchy_no_mine,   hours_no_mine   = _ts_build_hierarchy(rows_no_mine,   emp_names, proj_finance=proj_finance)
-        hierarchy_less_mine, hours_less_mine = _ts_build_hierarchy(rows_less_mine, emp_names, proj_finance=proj_finance)
+        hierarchy_no_mine,   hours_no_mine   = _ts_build_compare_hier(rows_no_mine,   emp_names, proj_finance=proj_finance)
+        hierarchy_less_mine, hours_less_mine = _ts_build_compare_hier(rows_less_mine, emp_names, proj_finance=proj_finance)
 
     return hierarchy, total_hours, totals, hierarchy_no_mine, hours_no_mine, hierarchy_less_mine, hours_less_mine
+
+
+def _ts_build_compare_hier(rows, emp_names=None, proj_finance=None):
+    """
+    Иерархия для страницы «Расходы vs Доходы»:
+      dept (ПЦ) → project (с финансовыми данными) → employees (с задачами по проекту)
+    """
+    dept_map   = {}
+    dept_order = []
+
+    for r in rows:
+        dept    = r["dept"] or "—"
+        proj    = r["project"] or "—"
+        emp     = r["employee"] or "—"
+        task    = r["task"] or ""
+        hours   = r["hours"] or 0.0
+        is_mine = bool(emp_names and emp.upper() in emp_names)
+
+        dot_pos = task.find(".")
+        if dot_pos > 0 and task[:dot_pos].strip().isdigit():
+            t_num  = task[:dot_pos].strip()
+            t_name = task[dot_pos + 1:].strip()
+        else:
+            t_num  = ""
+            t_name = task
+
+        pm_match = _RE_PROJ_NUM.match(proj.strip())
+        p_num = re.sub(r"[\s\xa0]+", "", pm_match.group(1)) if pm_match else ""
+
+        if dept not in dept_map:
+            dept_map[dept] = {}
+            dept_order.append(dept)
+
+        if proj not in dept_map[dept]:
+            fin = (proj_finance or {}).get(proj.lower(), {})
+            dept_map[dept][proj] = {
+                "hours": 0.0, "my_hours": 0.0, "others_hours": 0.0,
+                "client": r["client"] or "", "work_type": r["work_type"] or "",
+                "fp_fact":      fin.get("fp_fact", 0.0),
+                "fp_plan":      fin.get("fp_plan", 0.0),
+                "fp_opp":       fin.get("fp_opp",  0.0),
+                "section":      fin.get("section", ""),
+                "client_fp":    fin.get("client_fp", ""),
+                "ts_client":    fin.get("ts_client", ""),
+                "match_type":   fin.get("match_type"),
+                "match_score":  fin.get("match_score", 0.0),
+                "match_tokens": fin.get("match_tokens", []),
+                "emps": {},
+            }
+
+        pd = dept_map[dept][proj]
+        pd["hours"]        += hours
+        pd["my_hours"]     += hours if is_mine else 0.0
+        pd["others_hours"] += hours if not is_mine else 0.0
+
+        if emp not in pd["emps"]:
+            pd["emps"][emp] = {"hours": 0.0, "tasks": {}}
+        pd["emps"][emp]["hours"] += hours
+
+        task_key = (proj, task)
+        if task_key not in pd["emps"][emp]["tasks"]:
+            pd["emps"][emp]["tasks"][task_key] = {
+                "hours": 0.0, "task_num": t_num, "task_name": t_name, "proj_num": p_num,
+            }
+        pd["emps"][emp]["tasks"][task_key]["hours"] += hours
+
+    hierarchy = []
+    total = 0.0
+    for dept in dept_order:
+        proj_list = sorted(
+            [
+                {
+                    "name":         proj_name,
+                    "hours":        pd["hours"],
+                    "my_hours":     pd["my_hours"],
+                    "others_hours": pd["others_hours"],
+                    "client":       pd["client"],
+                    "fp_fact":      pd["fp_fact"],
+                    "fp_plan":      pd["fp_plan"],
+                    "fp_opp":       pd["fp_opp"],
+                    "section":      pd["section"],
+                    "client_fp":    pd["client_fp"],
+                    "ts_client":    pd["ts_client"],
+                    "match_type":   pd["match_type"],
+                    "match_score":  pd["match_score"],
+                    "match_tokens": pd["match_tokens"],
+                    "employees": sorted(
+                        [
+                            {
+                                "name":    en,
+                                "hours":   ed["hours"],
+                                "is_mine": bool(emp_names and en.upper() in emp_names),
+                                "tasks":   sorted(
+                                    [{"task_num": td["task_num"], "task_name": td["task_name"],
+                                      "proj_num": td["proj_num"], "hours": td["hours"]}
+                                     for td in ed["tasks"].values()],
+                                    key=lambda x: -x["hours"],
+                                ),
+                            }
+                            for en, ed in pd["emps"].items()
+                        ],
+                        key=lambda x: -x["hours"],
+                    ),
+                }
+                for proj_name, pd in dept_map[dept].items()
+            ],
+            key=lambda x: -x["hours"],
+        )
+        dept_hours = sum(p["hours"] for p in proj_list)
+        total += dept_hours
+        hierarchy.append({"dept": dept, "dept_hours": dept_hours, "projects": proj_list})
+
+    hierarchy.sort(key=lambda x: -x["dept_hours"])
+    return hierarchy, total
 
 
 def _ts_build_hierarchy(rows, emp_names=None, proj_finance=None):
@@ -3222,7 +3340,7 @@ def ts_set_filters():
         parts.append(f"ПЦ: {pc}")
     msg = "Фильтры сохранены" + (": " + ", ".join(parts) if parts else " (пусто — загружается всё)")
     flash(msg, "success")
-    return redirect(url_for("timesheets"))
+    return redirect(url_for("import_view"))
 
 
 @app.route("/timesheets/employees", methods=["POST"])

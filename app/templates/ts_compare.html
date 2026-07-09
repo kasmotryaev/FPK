@@ -3,12 +3,7 @@
 {% block content %}
 
 {# ═══════════════════════════════════════════════════════════
-   Макрос: иерархия dept→division для страницы сравнения
-   Аргументы:
-     hier       — список dept-элементов (от _ts_build_hierarchy с proj_finance)
-     total_h    — итого часов
-     emp_names  — set uppercased имён «моих» сотрудников
-     daily_rate — ставка в ₽/день (0 = не задана)
+   Иерархия: ПЦ → проект (с финансами) → сотрудники (с задачами)
    ═══════════════════════════════════════════════════════════ #}
 {% macro cmp_hier(hier, total_h, emp_names, daily_rate) %}
 <div class="ts-hierarchy">
@@ -19,129 +14,103 @@
       <span class="ts-dept-hours">{{ "%.1f"|format(dept_item.dept_hours) }} ч</span>
       <span class="ts-dept-pct">{{ "%.1f"|format(dept_item.dept_hours / total_h * 100 if total_h else 0) }}%</span>
       {% if daily_rate %}<span class="ts-dept-cost">{{ "{:,.0f}".format(dept_item.dept_hours / 8 * daily_rate).replace(",", " ") }} ₽</span>{% endif %}
+      <span class="ts-dept-sub">{{ dept_item.projects|length }} проектов</span>
     </summary>
-    <div class="ts-divs">
-      {% for div in dept_item.divisions %}
-      <details class="ts-div-block">
-        <summary class="ts-div-row">
-          <span class="ts-div-name">{{ div.name }}</span>
-          <span class="ts-div-bar-wrap">
-            <span class="ts-div-bar" style="width:{{ (div.hours / dept_item.dept_hours * 100)|round(1) if dept_item.dept_hours else 0 }}%"></span>
+
+    <div class="cmp-proj-list">
+      {% for proj in dept_item.projects %}
+      {% set days  = proj.hours / 8 %}
+      {% set cost  = days * daily_rate %}
+      {% set delta = proj.fp_plan - cost if (proj.match_type and daily_rate) else none %}
+      <details class="cmp-proj-block {{ 'cmp-proj-matched' if proj.match_type else 'cmp-proj-unmatched' }}">
+        <summary class="cmp-proj-summary">
+          {# Имя проекта + бейдж матчинга #}
+          <span class="cmp-ps-name">
+            {% if proj.match_type == 'num' %}
+              <span class="cmp-badge cmp-badge-num" title="Сопоставлено по номеру">№</span>
+            {% elif proj.match_type == 'name' %}
+              <span class="cmp-badge cmp-badge-name" title="Сопоставлено по названию">~</span>
+            {% elif proj.match_type == 'client_high' %}
+              <span class="cmp-badge cmp-badge-chi" title="Клиент Jaccard={{ proj.match_score }}: {{ proj.match_tokens|join(', ') }}">✓кл</span>
+            {% elif proj.match_type == 'client_med' %}
+              <span class="cmp-badge cmp-badge-cme" title="Клиент Jaccard={{ proj.match_score }}: {{ proj.match_tokens|join(', ') }}">⚠кл</span>
+            {% elif proj.match_type == 'client_low' %}
+              <span class="cmp-badge cmp-badge-clo" title="Клиент Jaccard={{ proj.match_score }}: {{ proj.match_tokens|join(', ') }}">⚠⚠</span>
+            {% else %}
+              <span class="cmp-badge cmp-badge-none" title="Не сопоставлено">?</span>
+            {% endif %}
+            <span class="cmp-ps-title" title="{{ proj.name }}">{{ proj.name }}</span>
           </span>
-          <span class="ts-div-hours">{{ "%.1f"|format(div.hours) }} ч</span>
-          {% if daily_rate %}<span class="ts-div-cost">{{ "{:,.0f}".format(div.hours / 8 * daily_rate).replace(",", " ") }} ₽</span>{% endif %}
+
+          {# Клиент #}
+          <span class="cmp-ps-client">
+            {% if proj.match_type and proj.match_type.startswith('client') and proj.ts_client and proj.client_fp != proj.ts_client %}
+              <span class="cmp-cli-ts" title="ТЗ">{{ proj.ts_client }}</span>
+            {% elif proj.client_fp %}
+              {{ proj.client_fp }}
+            {% elif proj.client %}
+              {{ proj.client }}
+            {% endif %}
+          </span>
+
+          {# Часы / Дни / Стоимость #}
+          <span class="cmp-ps-num">{{ "%.1f"|format(proj.hours) }} ч</span>
+          <span class="cmp-ps-num cmp-ps-days">{{ "%.1f"|format(days) }} д</span>
+          {% if daily_rate %}
+          <span class="cmp-ps-num cmp-ps-cost">{{ "{:,.0f}".format(cost).replace(",", " ") }}</span>
+          {% endif %}
+
+          {# Финансовый план #}
+          {% if proj.match_type %}
+            <span class="cmp-ps-num cmp-fact">{{ "{:,.0f}".format(proj.fp_fact).replace(",", " ") if proj.fp_fact else "—" }}</span>
+            <span class="cmp-ps-num cmp-plan">{{ "{:,.0f}".format(proj.fp_plan).replace(",", " ") if proj.fp_plan else "—" }}</span>
+            <span class="cmp-ps-num cmp-opp">{{ "{:,.0f}".format(proj.fp_opp).replace(",", " ")  if proj.fp_opp  else "—" }}</span>
+            {% if daily_rate %}
+            <span class="cmp-ps-num {{ 'cmp-pos' if delta is not none and delta >= 0 else 'cmp-neg' if delta is not none else '' }}">
+              {% if delta is not none %}{{ ('+' if delta >= 0 else '') + "{:,.0f}".format(delta).replace(",", " ") }}{% else %}—{% endif %}
+            </span>
+            {% endif %}
+          {% else %}
+            <span class="cmp-ps-num cmp-muted">—</span>
+            <span class="cmp-ps-num cmp-muted">—</span>
+            <span class="cmp-ps-num cmp-muted">—</span>
+            {% if daily_rate %}<span class="cmp-ps-num cmp-muted">—</span>{% endif %}
+          {% endif %}
+
+          {# Счётчик сотрудников #}
+          <span class="cmp-ps-emp-cnt">{{ proj.employees|length }} чел.</span>
         </summary>
-        <div class="ts-div-tabs">
-          <div class="ts-tab-buttons">
-            <button class="ts-tab-btn ts-tab-active" onclick="tsTab(this,'emp')">
-              👥 Сотрудники <span class="ts-tab-cnt">{{ div.employees|length }}</span>
-            </button>
-            <button class="ts-tab-btn" onclick="tsTab(this,'proj')">
-              📋 Проекты <span class="ts-tab-cnt">{{ div.projects|length }}</span>
-            </button>
-          </div>
 
-          {# Вкладка сотрудников #}
-          <div class="ts-tab-pane ts-tab-emp">
-            {% for emp in div.employees %}
-            {% set is_mine = emp.name.upper() in emp_names %}
-            <details class="ts-emp-details">
-              <summary class="ts-emp-line {{ 'ts-mine' if is_mine }}">
-                <span class="ts-emp-line-name">{{ emp.name }}</span>
-                <span class="ts-emp-line-hours">{{ "%.1f"|format(emp.hours) }} ч</span>
-                {% if is_mine %}<span class="ts-mine-badge">✓</span>{% endif %}
-              </summary>
-              {% if emp.tasks %}
-              <div class="ts-task-list">
-                {% for task in emp.tasks %}
-                <div class="ts-task-row">
-                  {% if task.task_num %}<span class="ts-task-num">{{ task.task_num }}</span>{% endif %}
-                  <span class="ts-task-name" title="{{ task.task_name or task.project }}">{{ task.task_name or task.project }}</span>
-                  <span class="ts-task-proj" title="{{ task.project }}">{{ task.proj_num or task.project }}</span>
-                  <span class="ts-task-hours">{{ "%.1f"|format(task.hours) }}</span>
-                </div>
-                {% endfor %}
+        {# Список сотрудников #}
+        <div class="cmp-emp-list">
+          {% if emp_names and proj.my_hours > 0 and proj.others_hours > 0 %}
+          <div class="cmp-emp-split-bar">
+            <span class="ts-split-mine" style="width:{{ (proj.my_hours / proj.hours * 100)|round|int }}%"></span>
+            <span class="ts-split-other" style="width:{{ (proj.others_hours / proj.hours * 100)|round|int }}%"></span>
+          </div>
+          {% endif %}
+          {% for emp in proj.employees %}
+          {% set is_mine = emp.is_mine %}
+          <details class="ts-emp-details">
+            <summary class="ts-emp-line {{ 'ts-mine' if is_mine }}">
+              <span class="ts-emp-line-name">{{ emp.name }}</span>
+              <span class="ts-emp-line-hours">{{ "%.1f"|format(emp.hours) }} ч</span>
+              {% if daily_rate %}<span class="ts-emp-line-cost">{{ "{:,.0f}".format(emp.hours / 8 * daily_rate).replace(",", " ") }} ₽</span>{% endif %}
+              {% if is_mine %}<span class="ts-mine-badge">✓</span>{% endif %}
+            </summary>
+            {% if emp.tasks %}
+            <div class="ts-task-list">
+              {% for task in emp.tasks %}
+              <div class="ts-task-row">
+                {% if task.task_num %}<span class="ts-task-num">{{ task.task_num }}</span>{% endif %}
+                <span class="ts-task-name" title="{{ task.task_name }}">{{ task.task_name or '—' }}</span>
+                <span class="ts-task-hours">{{ "%.1f"|format(task.hours) }}</span>
               </div>
-              {% endif %}
-            </details>
-            {% endfor %}
-          </div>
-
-          {# Вкладка проектов с финансовыми данными #}
-          <div class="ts-tab-pane ts-tab-proj" style="display:none">
-            <div class="cmp-proj-wrap">
-              <table class="cmp-proj-table">
-                <thead>
-                  <tr>
-                    <th class="cmp-th-name">Проект / Клиент</th>
-                    <th class="cmp-th-num">Часов</th>
-                    <th class="cmp-th-num">Дней</th>
-                    {% if daily_rate %}<th class="cmp-th-num">Стоимость</th>{% endif %}
-                    <th class="cmp-th-num" title="Портфель «Факт»">Факт</th>
-                    <th class="cmp-th-num" title="Портфель «0-100»">0-100</th>
-                    <th class="cmp-th-num" title="Портфель «Возможности»">Возм.</th>
-                    {% if daily_rate %}<th class="cmp-th-num">Δ 0-100−стоим.</th>{% endif %}
-                  </tr>
-                </thead>
-                <tbody>
-                  {% for proj in div.projects %}
-                  {% set days = proj.hours / 8 %}
-                  {% set cost = days * daily_rate %}
-                  {% set delta = proj.fp_plan - cost if (proj.match_type and daily_rate) else none %}
-                  <tr class="cmp-proj-row {{ 'cmp-row-unmatched' if not proj.match_type else 'cmp-row-matched' }}">
-                    <td class="cmp-td-name">
-                      <div class="cmp-proj-cell">
-                        <span class="cmp-proj-name" title="{{ proj.name }}">{{ proj.name }}</span>
-                        {% if proj.match_type == 'num' %}
-                          <span class="cmp-badge cmp-badge-num" title="Сопоставлено по номеру">№</span>
-                        {% elif proj.match_type == 'name' %}
-                          <span class="cmp-badge cmp-badge-name" title="Сопоставлено по названию">~</span>
-                        {% elif proj.match_type == 'client_high' %}
-                          <span class="cmp-badge cmp-badge-chi" title="Клиент Jaccard={{ proj.match_score }}: {{ proj.match_tokens|join(', ') }}">✓кл</span>
-                        {% elif proj.match_type == 'client_med' %}
-                          <span class="cmp-badge cmp-badge-cme" title="Клиент Jaccard={{ proj.match_score }}: {{ proj.match_tokens|join(', ') }}">⚠кл</span>
-                        {% elif proj.match_type == 'client_low' %}
-                          <span class="cmp-badge cmp-badge-clo" title="Клиент Jaccard={{ proj.match_score }}: {{ proj.match_tokens|join(', ') }}">⚠⚠</span>
-                        {% endif %}
-                      </div>
-                      {% if proj.match_type and proj.match_type.startswith('client') and proj.ts_client and proj.client_fp != proj.ts_client %}
-                      <div class="cmp-cli-diff">
-                        <span class="cmp-cli-ts">ТЗ: {{ proj.ts_client }}</span>
-                        <span class="cmp-cli-fp">ФП: {{ proj.client_fp }}</span>
-                      </div>
-                      {% elif proj.client_fp %}
-                      <div class="cmp-cli-sub">{{ proj.client_fp }}</div>
-                      {% elif proj.client %}
-                      <div class="cmp-cli-sub">{{ proj.client }}</div>
-                      {% endif %}
-                    </td>
-                    <td class="cmp-td-num">{{ "%.1f"|format(proj.hours) }}</td>
-                    <td class="cmp-td-num cmp-days">{{ "%.1f"|format(days) }}</td>
-                    {% if daily_rate %}
-                    <td class="cmp-td-num cmp-cost">{{ "{:,.0f}".format(cost).replace(",", " ") }}</td>
-                    {% endif %}
-                    {% if proj.match_type %}
-                    <td class="cmp-td-num cmp-fact">{{ "{:,.0f}".format(proj.fp_fact).replace(",", " ") if proj.fp_fact else "—" }}</td>
-                    <td class="cmp-td-num cmp-plan">{{ "{:,.0f}".format(proj.fp_plan).replace(",", " ") if proj.fp_plan else "—" }}</td>
-                    <td class="cmp-td-num cmp-opp">{{ "{:,.0f}".format(proj.fp_opp).replace(",", " ")  if proj.fp_opp  else "—" }}</td>
-                    {% if daily_rate %}
-                    <td class="cmp-td-num {{ 'cmp-pos' if delta is not none and delta >= 0 else 'cmp-neg' if delta is not none else '' }}">
-                      {% if delta is not none %}{{ ('+' if delta >= 0 else '') + "{:,.0f}".format(delta).replace(",", " ") }}{% else %}—{% endif %}
-                    </td>
-                    {% endif %}
-                    {% else %}
-                    <td class="cmp-td-num cmp-muted">—</td>
-                    <td class="cmp-td-num cmp-muted">—</td>
-                    <td class="cmp-td-num cmp-muted">—</td>
-                    {% if daily_rate %}<td class="cmp-td-num cmp-muted">—</td>{% endif %}
-                    {% endif %}
-                  </tr>
-                  {% endfor %}
-                </tbody>
-              </table>
+              {% endfor %}
             </div>
-          </div>
-
+            {% endif %}
+          </details>
+          {% endfor %}
         </div>
       </details>
       {% endfor %}
@@ -278,17 +247,31 @@
   {% endif %}
 </div>
 
-{# Легенда матчей #}
+{# Легенда матчей + заголовок колонок #}
 <div class="cmp-legend">
   <span class="cmp-badge cmp-badge-num">№</span> по номеру&ensp;
   <span class="cmp-badge cmp-badge-name">~</span> по названию&ensp;
   <span class="cmp-badge cmp-badge-chi">✓кл</span> клиент надёжно&ensp;
   <span class="cmp-badge cmp-badge-cme">⚠кл</span> клиент осторожно&ensp;
   <span class="cmp-badge cmp-badge-clo">⚠⚠</span> клиент слабо&ensp;
-  <span class="cmp-unmatched-dot"></span> нет совпадения
+  <span class="cmp-badge cmp-badge-none">?</span> нет совпадения
 </div>
 
-{# Аккордеон #}
+{# Шапка колонок проектной строки #}
+<div class="cmp-proj-col-header">
+  <span class="cmp-ps-name">Проект</span>
+  <span class="cmp-ps-client">Клиент</span>
+  <span class="cmp-ps-num">Часов</span>
+  <span class="cmp-ps-num cmp-ps-days">Дней</span>
+  {% if daily_rate %}<span class="cmp-ps-num cmp-ps-cost">Стоим., ₽</span>{% endif %}
+  <span class="cmp-ps-num cmp-fact">Факт, ₽</span>
+  <span class="cmp-ps-num cmp-plan">0-100, ₽</span>
+  <span class="cmp-ps-num cmp-opp">Возм., ₽</span>
+  {% if daily_rate %}<span class="cmp-ps-num">Δ 0-100−ст.</span>{% endif %}
+  <span class="cmp-ps-emp-cnt">Команда</span>
+</div>
+
+{# Основной аккордеон #}
 {{ cmp_hier(hierarchy, total_hours, emp_names, daily_rate) }}
 
 {# ── Блок 2: без моих сотрудников ── #}
@@ -309,8 +292,8 @@
   <div class="ts-extra-hdr">
     <span class="ts-extra-title">Мои меньше чужих</span>
     <span class="ts-extra-sub">
-      <span class="ts-split-mine">■ свои</span> /
-      <span class="ts-split-other">■ другие</span>, ч
+      <span class="ts-split-mine" style="display:inline-block;width:12px;height:10px;vertical-align:middle"></span> свои /
+      <span class="ts-split-other" style="display:inline-block;width:12px;height:10px;vertical-align:middle"></span> другие
     </span>
     <span class="ts-extra-hours">{{ "%.1f"|format(hours_less_mine) }} ч</span>
   </div>
@@ -319,15 +302,5 @@
 {% endif %}
 
 {% endif %}
-
-<script>
-function tsTab(btn, tab) {
-  var tabs = btn.closest('.ts-div-tabs');
-  tabs.querySelectorAll('.ts-tab-btn').forEach(b => b.classList.remove('ts-tab-active'));
-  btn.classList.add('ts-tab-active');
-  tabs.querySelector('.ts-tab-emp').style.display = (tab === 'emp') ? '' : 'none';
-  tabs.querySelector('.ts-tab-proj').style.display = (tab === 'proj') ? '' : 'none';
-}
-</script>
 
 {% endblock %}

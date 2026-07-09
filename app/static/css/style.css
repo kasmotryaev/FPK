@@ -1044,82 +1044,78 @@ select.status-select { font-size: 12px; padding: 4px 8px; border-radius: 6px; fo
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   ТАБЛИЦА ПРОЕКТОВ НА СТРАНИЦЕ СРАВНЕНИЯ (cmp_hier macro)
+   АККОРДЕОН ПРОЕКТОВ: ПЦ → проект → сотрудники (cmp_hier macro)
    ════════════════════════════════════════════ */
 
-.cmp-proj-wrap { overflow-x: auto; }
+.cmp-proj-list { padding: 0 0 6px 12px; }
 
-.cmp-proj-table {
-  width: 100%; border-collapse: collapse;
-  font-size: 12px; white-space: nowrap;
+.cmp-proj-block {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  margin: 4px 0; background: var(--paper); overflow: hidden;
 }
-.cmp-proj-table thead th {
-  padding: 6px 8px; border-bottom: 2px solid var(--line);
-  color: var(--ink-500); font-size: 11px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: 0.04em;
-  background: var(--paper);
+.cmp-proj-block[open] { box-shadow: var(--shadow); }
+.cmp-proj-unmatched { opacity: 0.65; }
+.cmp-proj-matched   { opacity: 1; }
+
+.cmp-proj-summary {
+  display: flex; align-items: center;
+  padding: 7px 10px; cursor: pointer; list-style: none;
+  font-size: 12.5px; background: var(--neutral-bg);
+  border-bottom: 1px solid transparent; user-select: none;
 }
-.cmp-proj-table tbody tr { border-bottom: 1px solid var(--line); }
-.cmp-proj-table tbody tr:hover { background: color-mix(in srgb, var(--accent-bg) 30%, transparent); }
+.cmp-proj-summary::-webkit-details-marker { display: none; }
+.cmp-proj-block[open] > .cmp-proj-summary { border-bottom-color: var(--line); }
+.cmp-proj-summary:hover { background: color-mix(in srgb, var(--accent-bg) 20%, var(--neutral-bg)); }
 
-.cmp-th-name { text-align: left; min-width: 200px; }
-.cmp-th-num  { text-align: right; min-width: 60px; }
+.cmp-ps-name {
+  flex: 0 0 280px; display: flex; align-items: center; gap: 4px; overflow: hidden;
+}
+.cmp-ps-title {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 600; color: var(--ink-900);
+}
+.cmp-ps-client {
+  flex: 1 1 120px; min-width: 60px; max-width: 200px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; color: var(--ink-400); padding: 0 8px;
+}
+.cmp-ps-num {
+  flex: 0 0 74px; text-align: right;
+  font-variant-numeric: tabular-nums; padding-right: 6px; white-space: nowrap;
+}
+.cmp-ps-days { color: var(--ink-500); }
+.cmp-ps-cost { color: var(--ink-600); }
+.cmp-ps-emp-cnt {
+  flex: 0 0 54px; text-align: right; font-size: 11px; color: var(--ink-400);
+}
 
-.cmp-td-name { padding: 5px 8px; vertical-align: top; white-space: normal; max-width: 260px; }
-.cmp-td-num  {
-  padding: 5px 8px; vertical-align: middle; text-align: right;
+.cmp-proj-col-header {
+  display: flex; align-items: center; padding: 4px 10px;
+  margin: 8px 0 0 12px; font-size: 10.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--ink-400); border-bottom: 1px solid var(--line);
+}
+
+.cmp-cli-ts { color: var(--ink-400); font-size: 11px; }
+.cmp-cli-fp { color: var(--ink-600); font-size: 11px; }
+.cmp-cost   { color: var(--ink-600); }
+.cmp-fact   { color: var(--accent); font-weight: 600; }
+.cmp-plan   { color: var(--ink-700); }
+.cmp-opp    { color: var(--ink-400); }
+.cmp-muted  { color: var(--ink-300); }
+.cmp-pos    { color: var(--green, #27ae60); font-weight: 600; }
+.cmp-neg    { color: var(--red,   #e74c3c); font-weight: 600; }
+
+.cmp-emp-list { padding: 6px 12px 8px; background: var(--paper); }
+.cmp-emp-split-bar {
+  display: flex; height: 4px; border-radius: 2px; overflow: hidden; margin-bottom: 6px;
+}
+.ts-split-mine  { background: var(--accent); }
+.ts-split-other { background: var(--ink-200); }
+.ts-emp-line-cost {
+  margin-left: auto; font-size: 11px; color: var(--ink-400);
   font-variant-numeric: tabular-nums;
 }
-
-.cmp-proj-cell { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.cmp-proj-name {
-  max-width: 200px; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; color: var(--ink-900); font-weight: 500;
-  cursor: default;
-}
-.cmp-cli-sub { font-size: 11px; color: var(--ink-400); margin-top: 2px; }
-.cmp-cli-diff { font-size: 11px; margin-top: 2px; display: flex; flex-direction: column; gap: 1px; }
-.cmp-cli-ts { color: var(--ink-400); }
-.cmp-cli-fp { color: var(--ink-600); }
-
-/* Числа в таблице проектов */
-.cmp-cost { color: var(--ink-600); }
-.cmp-fact { color: var(--accent); font-weight: 600; }
-.cmp-plan { color: var(--ink-700); }
-.cmp-opp  { color: var(--ink-400); }
-.cmp-muted { color: var(--ink-300); }
-.cmp-pos { color: var(--green, #27ae60); font-weight: 600; }
-.cmp-neg { color: var(--red,   #e74c3c); font-weight: 600; }
-
-/* ── Тип импорта [ПО] / [ДЗ] ───────────────────────────────── */
-.ts-type-badge {
-  display: inline-block;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: .04em;
-  padding: 1px 4px;
-  border-radius: 3px;
-  vertical-align: middle;
-  margin-right: 3px;
-  line-height: 1.4;
-}
-.ts-type-po {
-  background: var(--ink-200, #dde2ea);
-  color: var(--ink-600, #4b5563);
-}
-.ts-type-dz {
-  background: #dbeafe;
-  color: #1d4ed8;
-}
-
-/* ── Блок «По продукту — другая команда» ───────────────────── */
-.ts-extra-product .ts-extra-hdr {
-  border-left: 3px solid #3b82f6;
-  background: rgba(59, 130, 246, .06);
-}
-
-/* Строки: сопоставлена / нет */
-.cmp-row-unmatched { opacity: 0.6; }
 .cmp-row-matched   { opacity: 1; }
 
 /* Точка «нет совпадения» в легенде */

@@ -119,40 +119,7 @@
 <div class="ts-toolbar">
 
   {% if current_user_role == 'owner' %}
-
-  <details class="ts-upload-details">
-    <summary>⚙ Фильтры загрузки</summary>
-    <form method="POST" action="{{ url_for('ts_set_filters') }}" class="ts-rate-form">
-      <p style="font-size:12px;color:var(--ink-500);margin:0 0 8px">
-        Применяются при каждой новой загрузке файла трудозатрат.
-        Оставьте поле пустым — будут загружены все строки.
-      </p>
-      <div class="ts-upload-row" style="flex-wrap:wrap;gap:10px">
-        <label style="display:flex;flex-direction:column;gap:3px;font-size:12px">
-          РП (точное совпадение)
-          <input type="text" name="ts_rp_filter" value="{{ ts_rp_filter }}"
-                 placeholder="напр. Иванов И.И." class="ts-rate-input" style="width:200px">
-        </label>
-        <label style="display:flex;flex-direction:column;gap:3px;font-size:12px">
-          ПЦ (подстрока в колонке «Департамент»)
-          <input type="text" name="ts_pc_filter" value="{{ ts_pc_filter }}"
-                 placeholder="напр. Операционная деятельность" class="ts-rate-input" style="width:260px">
-        </label>
-        <button class="btn btn-primary btn-sm" type="submit" style="align-self:flex-end">Сохранить</button>
-      </div>
-    </form>
-  </details>
-
-  <details class="ts-upload-details">
-    <summary>↑ Загрузить отчёт трудозатрат</summary>
-    <form method="POST" action="{{ url_for('ts_import') }}" enctype="multipart/form-data" class="ts-upload-form">
-      <label>Excel-файл (.xlsx, .xlsb) — Отчёт распределение ресурсов:</label>
-      <div class="ts-upload-row">
-        <input type="file" name="ts_file" accept=".xlsx,.xls,.xlsb">
-        <button class="btn btn-primary" type="submit">Загрузить</button>
-      </div>
-    </form>
-  </details>
+  <a href="{{ url_for('import_view') }}" class="btn btn-sm" title="Загрузка и настройки">⚙ Настройки</a>
   {% endif %}
 
   {% if imports %}

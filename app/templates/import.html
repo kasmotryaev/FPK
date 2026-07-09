@@ -9,9 +9,12 @@
   <button class="btn btn-sm" type="button" onclick="history.back()">← Назад</button>
 </div>
 
-<div class="card section-block" style="max-width:540px">
-  <div class="section-title">Загрузка подложки из Excel</div>
-  <form method="POST" enctype="multipart/form-data" style="margin-top:10px">
+<div class="card section-block" style="max-width:560px">
+  <div class="section-title">Финансовый план — загрузка подложки</div>
+  <div class="obl-meta" style="margin-bottom:12px">
+    <strong>Как получить файл:</strong> СЦ &gt; Факт + Прогноз по РП &gt; выгрузить в Excel
+  </div>
+  <form method="POST" enctype="multipart/form-data" style="margin-top:4px">
     <div class="form-group">
       <label>За какой квартал</label>
       <select name="upload_quarter" style="min-width:150px">
@@ -35,6 +38,52 @@
     Кнопка «Зафиксировать» доступна на дашборде.
   </div>
 </div>
+
+{% if current_user_role == 'owner' %}
+<div class="card section-block" style="max-width:560px">
+  <div class="section-title">Трудозатраты — настройки фильтра</div>
+  <div class="obl-meta" style="margin-bottom:12px">
+    Применяются при каждой новой загрузке файла трудозатрат. Оставьте поле пустым — будут загружены все строки.
+  </div>
+  <form method="POST" action="{{ url_for('ts_set_filters') }}">
+    <div class="form-group">
+      <label>РП (точное совпадение)</label>
+      <input type="text" name="ts_rp_filter" value="{{ ts_rp_filter }}"
+             placeholder="напр. Иванов И.И." style="min-width:240px">
+    </div>
+    <div class="form-group">
+      <label>ПЦ (подстрока в колонке «Департамент»)</label>
+      <input type="text" name="ts_pc_filter" value="{{ ts_pc_filter }}"
+             placeholder="напр. Операционная деятельность" style="min-width:300px">
+    </div>
+    <button class="btn btn-primary" type="submit">Сохранить</button>
+  </form>
+</div>
+
+<div class="card section-block" style="max-width:560px">
+  <div class="section-title">Трудозатраты — загрузить файл</div>
+  <div class="obl-meta" style="margin-bottom:12px">
+    <strong>Как получить файл:</strong> Указать РП в настройках выше. Грузить файл списаний от ПО.
+    {% if ts_rp_filter or ts_pc_filter %}
+    <br>Текущий фильтр:
+    {% if ts_rp_filter %}<strong>РП: {{ ts_rp_filter }}</strong>{% endif %}
+    {% if ts_rp_filter and ts_pc_filter %} · {% endif %}
+    {% if ts_pc_filter %}<strong>ПЦ: {{ ts_pc_filter }}</strong>{% endif %}
+    {% else %}
+    <br><span style="color:var(--warn)">⚠ Фильтр РП не задан — будут загружены все строки файла</span>
+    {% endif %}
+  </div>
+  <form method="POST" action="{{ url_for('ts_import') }}" enctype="multipart/form-data">
+    <div class="form-group">
+      <label>Excel-файл (.xlsx, .xlsb)</label>
+      <div style="display:flex;gap:10px;align-items:center">
+        <input type="file" name="ts_file" accept=".xlsx,.xls,.xlsb" required>
+        <button class="btn btn-primary" type="submit">Загрузить</button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endif %}
 
 {% if last_diff %}
 <div class="card section-block">
