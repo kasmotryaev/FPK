@@ -91,7 +91,7 @@ def _make_record(row, cols):
 
 # ─── Чтение .xlsb через pyxlsb ───────────────────────────────────────────────
 
-def _parse_xlsb(path, rp_filter=None):
+def _parse_xlsb(path, rp_filter=None, pc_filter=None):
     """Читает .xlsb напрямую через pyxlsb."""
     try:
         import pyxlsb
@@ -136,6 +136,8 @@ def _parse_xlsb(path, rp_filter=None):
                     continue
                 if rp_filter and rec['rp'] != rp_filter:
                     continue
+                if pc_filter and not _pc_match(rec.get('dept'), pc_filter):
+                    continue
                 records.append(rec)
 
     if not header_found:
@@ -148,7 +150,14 @@ def _parse_xlsb(path, rp_filter=None):
 
 # ─── Чтение .xlsx через openpyxl ─────────────────────────────────────────────
 
-def _parse_xlsx(path, rp_filter=None):
+def _pc_match(dept, pc_filter):
+    """Проверяет, содержит ли dept подстроку pc_filter (без учёта регистра)."""
+    if not dept or not pc_filter:
+        return False
+    return pc_filter.lower() in dept.lower()
+
+
+def _parse_xlsx(path, rp_filter=None, pc_filter=None):
     """Читает .xlsx через openpyxl."""
     wb = openpyxl.load_workbook(path, data_only=True)
 
@@ -186,6 +195,8 @@ def _parse_xlsx(path, rp_filter=None):
             continue
         if rp_filter and rec['rp'] != rp_filter:
             continue
+        if pc_filter and not _pc_match(rec.get('dept'), pc_filter):
+            continue
         records.append(rec)
 
     wb.close()
@@ -200,21 +211,23 @@ def _parse_xlsx(path, rp_filter=None):
 
 # ─── Публичный API ────────────────────────────────────────────────────────────
 
-def parse_ts_file(filepath, rp_filter=None):
+def parse_ts_file(filepath, rp_filter=None, pc_filter=None):
     """
     Разбирает файл трудозатрат (.xlsx или .xlsb).
 
-    :param filepath: путь к файлу
-    :param rp_filter: если задан — возвращаем только строки этого РП
+    :param filepath:  путь к файлу
+    :param rp_filter: если задан — только строки этого РП (точное совпадение)
+    :param pc_filter: если задан — только строки, где dept содержит эту подстроку
+                      (например «Операционная деятельность»)
     :return: list[dict] с ключами:
              rp, dept, division, employee, project, task, client,
              project_type, work_type, hours
     """
     path = str(filepath)
     if path.lower().endswith('.xlsb'):
-        return _parse_xlsb(path, rp_filter=rp_filter)
+        return _parse_xlsb(path, rp_filter=rp_filter, pc_filter=pc_filter)
     else:
-        return _parse_xlsx(path, rp_filter=rp_filter)
+        return _parse_xlsx(path, rp_filter=rp_filter, pc_filter=pc_filter)
 
 
 def parse_employees_file(filepath):

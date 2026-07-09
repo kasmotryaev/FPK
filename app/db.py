@@ -489,7 +489,8 @@ def init_db():
         imported_by INTEGER REFERENCES users(id),
         imported_at TEXT DEFAULT CURRENT_TIMESTAMP,
         rows_total INTEGER DEFAULT 0,
-        rp_filter TEXT DEFAULT 'Смотряев К.А.'
+        rp_filter TEXT,
+        pc_filter TEXT
     )
     """)
 
@@ -537,7 +538,8 @@ def init_db():
             imported_by INTEGER REFERENCES users(id),
             imported_at TEXT DEFAULT CURRENT_TIMESTAMP,
             rows_total INTEGER DEFAULT 0,
-            rp_filter TEXT DEFAULT 'Смотряев К.А.'
+            rp_filter TEXT,
+            pc_filter TEXT
         )
         """)
         cur.execute("""
@@ -559,6 +561,12 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ts_rows_import ON ts_rows(import_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ts_rows_dept ON ts_rows(import_id, dept)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ts_rows_emp ON ts_rows(import_id, employee)")
+        conn.commit()
+
+    # Миграция: добавляем pc_filter в ts_imports если его нет
+    ts_imp_cols = [c["name"] for c in cur.execute("PRAGMA table_info(ts_imports)").fetchall()]
+    if "pc_filter" not in ts_imp_cols:
+        cur.execute("ALTER TABLE ts_imports ADD COLUMN pc_filter TEXT")
         conn.commit()
     # ──────────────────────────────────────────────────────────────────────────
 

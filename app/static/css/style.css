@@ -1034,6 +1034,18 @@ select.status-select { font-size: 12px; padding: 4px 8px; border-radius: 6px; fo
 /* ─── Ставка / форма ─── */
 .ts-rate-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ts-rate-form label { font-size: 12.5px; font-weight: 600; color: var(--ink-700); }
+.ts-filter-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-500);
+  background: var(--paper-alt, #f4f6fa);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 8px;
+  margin-left: 10px;
+  vertical-align: middle;
+}
 .ts-rate-input {
   width: 90px; font-size: 13px; padding: 4px 8px;
   border-radius: var(--radius); border: 1px solid var(--line);

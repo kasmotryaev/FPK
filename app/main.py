@@ -2748,8 +2748,6 @@ def unlink_telegram(user_id):
 #  ТРУДОЗАТРАТЫ
 # ═══════════════════════════════════════════════════════════════════════════════
 
-TS_RP_FILTER = "Смотряев К.А."
-
 _RE_PROJ_NUM = re.compile(r'^(\d{6,8})\b')
 
 # Слова, которые убираем при нормализации имён клиентов (правовые формы и мусор)
@@ -3084,6 +3082,9 @@ def _ts_build_hierarchy(rows, emp_names=None, proj_finance=None):
 def timesheets():
     conn = get_conn()
 
+    ts_rp_filter = get_setting(conn, "ts_rp_filter") or ""
+    ts_pc_filter = get_setting(conn, "ts_pc_filter") or ""
+
     imports = conn.execute(
         "SELECT * FROM ts_imports ORDER BY imported_at DESC LIMIT 20"
     ).fetchall()
@@ -3160,7 +3161,8 @@ def timesheets():
         employees=employees,
         emp_names=emp_names,
         import_emp_names=import_emp_names,
-        rp_filter=TS_RP_FILTER,
+        ts_rp_filter=ts_rp_filter,
+        ts_pc_filter=ts_pc_filter,
     )
 
 
@@ -3177,8 +3179,13 @@ def ts_import():
     tmp_path = UPLOAD_DIR / filename
     f.save(tmp_path)
 
+    conn_cfg = get_conn()
+    ts_rp_filter = get_setting(conn_cfg, "ts_rp_filter") or None
+    ts_pc_filter = get_setting(conn_cfg, "ts_pc_filter") or None
+    conn_cfg.close()
+
     try:
-        rows = parse_ts_file(str(tmp_path), rp_filter=TS_RP_FILTER)
+        rows = parse_ts_file(str(tmp_path), rp_filter=ts_rp_filter, pc_filter=ts_pc_filter)
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
@@ -3203,8 +3210,8 @@ def ts_import():
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO ts_imports (filename, period_label, imported_by, rows_total, rp_filter) VALUES (?,?,?,?,?)",
-        (filename, period_label, session.get("user_id"), len(rows), TS_RP_FILTER),
+        "INSERT INTO ts_imports (filename, period_label, imported_by, rows_total, rp_filter, pc_filter) VALUES (?,?,?,?,?,?)",
+        (filename, period_label, session.get("user_id"), len(rows), ts_rp_filter, ts_pc_filter),
     )
     import_id = cur.lastrowid
 
@@ -3223,6 +3230,27 @@ def ts_import():
     conn.close()
     flash(f"Импортировано {len(rows)} строк за период «{period_label}»", "success")
     return redirect(url_for("timesheets", import_id=import_id))
+
+
+@app.route("/timesheets/set-filters", methods=["POST"])
+@login_required
+@owner_required
+def ts_set_filters():
+    rp = request.form.get("ts_rp_filter", "").strip()
+    pc = request.form.get("ts_pc_filter", "").strip()
+    conn = get_conn()
+    set_setting(conn, "ts_rp_filter", rp)
+    set_setting(conn, "ts_pc_filter", pc)
+    conn.commit()
+    conn.close()
+    parts = []
+    if rp:
+        parts.append(f"РП: {rp}")
+    if pc:
+        parts.append(f"ПЦ: {pc}")
+    msg = "Фильтры сохранены" + (": " + ", ".join(parts) if parts else " (пусто — загружается всё)")
+    flash(msg, "success")
+    return redirect(url_for("timesheets"))
 
 
 @app.route("/timesheets/employees", methods=["POST"])
@@ -3347,6 +3375,7 @@ def ts_compare():
          hierarchy_less_mine, hours_less_mine) = _ts_build_compare(selected_import_id, conn, emp_names)
 
     daily_rate = float(get_setting(conn, "ts_daily_rate") or 0)
+    cmp_rp_filter = get_setting(conn, "ts_rp_filter") or ""
     conn.close()
     return render_template(
         "ts_compare.html",
@@ -3362,7 +3391,7 @@ def ts_compare():
         hours_no_mine=hours_no_mine,
         hierarchy_less_mine=hierarchy_less_mine,
         hours_less_mine=hours_less_mine,
-        rp_filter=TS_RP_FILTER,
+        rp_filter=cmp_rp_filter,
     )
 
 
