@@ -1168,11 +1168,14 @@ def get_view_quarter(conn):
     return vqls[0] if vqls else get_default_view_quarter(conn)
 
 
-def get_period_info(quarter_labels=None):
+def get_period_info(quarter_labels=None, conn=None):
     """Определяет рабочий период по месяцам, реально присутствующим в активных строках.
     quarter_labels: str или list — фильтр по кварталу(ам). None = все активные строки.
+    conn: опциональная открытая коннекция — используется как есть, без закрытия.
     Возвращает (months, qnum, outlier_months)."""
-    conn = get_conn()
+    _own_conn = conn is None
+    if _own_conn:
+        conn = get_conn()
     if quarter_labels:
         if isinstance(quarter_labels, str):
             quarter_labels = [quarter_labels]
@@ -1183,7 +1186,8 @@ def get_period_info(quarter_labels=None):
         ).fetchall()
     else:
         rows = conn.execute("SELECT DISTINCT month FROM fp_rows WHERE is_active = 1").fetchall()
-    conn.close()
+    if _own_conn:
+        conn.close()
     months_in_data = [r["month"] for r in rows if r["month"] in MONTH_INDEX]
     months_in_data.sort(key=lambda m: MONTH_INDEX[m])
 
@@ -1325,7 +1329,7 @@ def dashboard():
     conn = get_conn()
     vqls, _mode = get_view_context(conn)
     ql_ph = ",".join("?" * len(vqls))
-    months, qnum, outlier_months = get_period_info(vqls)
+    months, qnum, outlier_months = get_period_info(vqls, conn=conn)
     m_ph = ",".join("?" * len(months)) if months else "''"
     rows = conn.execute(f"""
         SELECT * FROM fp_rows
@@ -2011,12 +2015,6 @@ def rows_list():
     client = request.args.getlist("client")
     search = request.args.get("q", "")
     only_unassigned = request.args.get("unassigned") == "1"
-    sort_by = request.args.get("sort", "dpa_date")
-    sort_dir = request.args.get("dir", "asc")
-    group_by = request.args.get("group", "")
-    view_mode = request.args.get("view", "aggregated")
-    if view_mode not in ("detail", "aggregated", "accordion"):
-        view_mode = "accordion"
     agg_sort = request.args.get("asort", "total")
     if agg_sort not in AGG_SORT_FIELDS:
         agg_sort = "total"
@@ -2039,7 +2037,7 @@ def rows_list():
 
     vqls, _mode = get_view_context(conn)
     ql_ph = ",".join("?" * len(vqls))
-    months, qnum, outlier_months = get_period_info(vqls)
+    months, qnum, outlier_months = get_period_info(vqls, conn=conn)
     m_ph = ",".join("?" * len(months)) if months else "''"
     query = f"""
         SELECT f.*
@@ -2073,59 +2071,54 @@ def rows_list():
         query += " AND (LOWER(f.client_name) LIKE LOWER(?) OR LOWER(f.project_name) LIKE LOWER(?) OR LOWER(f.contract_num) LIKE LOWER(?))"
         params += [f"%{search}%"] * 3
 
-    sort_column = f"f.{sort_by}" if sort_by in SORTABLE_FIELDS else "f.dpa_date"
-    direction = "DESC" if sort_dir == "desc" else "ASC"
-    query += f" ORDER BY {sort_column} IS NULL, {sort_column} {direction}"
+    query += " ORDER BY f.client_name, f.dpa_date IS NULL, f.dpa_date"
     rows = conn.execute(query, params).fetchall()
 
     row_ids = [r["id"] for r in rows]
-    obl_by_row = {}
+    obl_by_row = {}   # {row_id: count} — только для счётчика на кнопке
     if row_ids:
         ph = ",".join("?" * len(row_ids))
-        obls = conn.execute(
-            f"SELECT * FROM obligations WHERE fp_row_id IN ({ph}) ORDER BY due_date IS NULL, due_date ASC",
-            row_ids,
-        ).fetchall()
-        for o in obls:
-            obl_by_row.setdefault(o["fp_row_id"], []).append(o)
+        if only_unassigned:
+            # Полные данные нужны для фильтрации по типу ответственного
+            obls_full = conn.execute(
+                f"SELECT fp_row_id, responsible_type FROM obligations WHERE fp_row_id IN ({ph})",
+                row_ids,
+            ).fetchall()
+            _obl_full_map = {}  # {row_id: [list of obls]}
+            for o in obls_full:
+                _obl_full_map.setdefault(o["fp_row_id"], []).append(o)
+            rows = [r for r in rows if (
+                (r["section"] in TEAM_LEAD_SECTIONS and not any(
+                    o["responsible_type"] == "team_lead" for o in _obl_full_map.get(r["id"], [])
+                ))
+                or
+                (r["section"] in OWNER_SECTIONS and not any(
+                    o["responsible_type"] == "owner" for o in _obl_full_map.get(r["id"], [])
+                ))
+            )]
+            # Пересчитываем row_ids после фильтрации
+            row_ids = [r["id"] for r in rows]
+            ph = ",".join("?" * len(row_ids)) if row_ids else None
 
-    if only_unassigned:
-        rows = [r for r in rows if (
-            (r["section"] in TEAM_LEAD_SECTIONS and not any(
-                o["responsible_type"] == "team_lead" for o in obl_by_row.get(r["id"], [])
-            ))
-            or
-            (r["section"] in OWNER_SECTIONS and not any(
-                o["responsible_type"] == "owner" for o in obl_by_row.get(r["id"], [])
-            ))
-        )]
+        if row_ids:
+            ph = ph or ",".join("?" * len(row_ids))
+            for cnt_row in conn.execute(
+                f"SELECT fp_row_id, COUNT(*) as cnt FROM obligations WHERE fp_row_id IN ({ph}) GROUP BY fp_row_id",
+                row_ids,
+            ).fetchall():
+                obl_by_row[cnt_row["fp_row_id"]] = cnt_row["cnt"]
 
-    # Группировка
-    groups = None
-    if group_by:
-        groups = {}
-        for r in rows:
-            key = r[group_by] if group_by in r.keys() else "—"
-            key = key or "—"
-            groups.setdefault(key, []).append(r)
-
-    # Подытоги
-    def calc_totals(row_set):
-        t = {"Факт": 0.0, "0-100": 0.0, "Возможности": 0.0, "count": 0}
-        for r in row_set:
-            p = r["portfolio"] or "Прочее"
-            t[p] = t.get(p, 0.0) + (r["amount_0_100"] or 0)
-            t["count"] += 1
-        return t
-
-    grand_total = calc_totals(rows)
-    group_totals = {k: calc_totals(v) for k, v in groups.items()} if groups else None
+    # Дропдауны фильтров — берём из уже загруженных строк (без дополнительных запросов к БД).
+    # При активном section/client/manager-фильтре дополнительно подгружаем все доступные значения.
+    _all_rows_q = f"SELECT section, client_name, project_manager FROM fp_rows WHERE is_active=1 AND quarter_label IN ({ql_ph})"
+    _all_rows = conn.execute(_all_rows_q, vqls).fetchall()
+    _sections_set  = sorted({r["section"]         for r in _all_rows if r["section"]},         key=str)
+    _clients_set   = sorted({r["client_name"]      for r in _all_rows if r["client_name"]},     key=str)
+    _managers_set  = sorted({r["project_manager"]  for r in _all_rows if r["project_manager"]}, key=str)
 
     # Агрегированный вид: аккордеон по клиентам (client → sections → rows)
-    # Показывает всех клиентов и все разделы (в т.ч. Сопровождение и TaaS).
-    aggregated = None
     client_accordion = None
-    if view_mode == "aggregated":
+    if True:
         cli_map   = {}
         cli_order = []
         for r in rows:
@@ -2185,89 +2178,14 @@ def rows_list():
             })
         client_accordion.sort(key=lambda c: -(c["amount_0100"] + c["amount_opp"] + c["fact_total"]))
 
-    # Аккордеон-вид: section → clients + rows
-    section_accordion = None
-    if view_mode == "accordion":
-        sec_map   = {}
-        sec_order = []
-        for r in rows:
-            sec = r["section"] or "—"
-            if sec not in sec_map:
-                sec_map[sec] = {
-                    "section": sec,
-                    "amount_0100": 0.0, "amount_opp": 0.0, "fact_total": 0.0,
-                    "row_count": 0, "max_risk": 0,
-                    "cli_map": {}, "rows": [],
-                }
-                sec_order.append(sec)
-            sm  = sec_map[sec]
-            p   = r["portfolio"]
-            amt = r["amount_0_100"] or 0
-            if p == "0-100":
-                sm["amount_0100"] += amt
-            elif p == "Возможности":
-                sm["amount_opp"] += amt
-            elif p == "Факт":
-                sm["fact_total"] += amt
-            sm["row_count"] += 1
-            sm["max_risk"] = max(sm["max_risk"], r["risk_level"] or 0)
-            sm["rows"].append(r)
-            cli = r["client_name"] or "—"
-            if cli not in sm["cli_map"]:
-                sm["cli_map"][cli] = {
-                    "name": cli, "amount_0100": 0.0, "amount_opp": 0.0,
-                    "fact": 0.0, "row_count": 0, "max_risk": 0,
-                }
-            cm = sm["cli_map"][cli]
-            if p == "0-100":
-                cm["amount_0100"] += amt
-            elif p == "Возможности":
-                cm["amount_opp"] += amt
-            elif p == "Факт":
-                cm["fact"] += amt
-            cm["row_count"] += 1
-            cm["max_risk"] = max(cm["max_risk"], r["risk_level"] or 0)
 
-        section_accordion = []
-        for sec in sec_order:
-            sm = sec_map[sec]
-            clients_sorted = sorted(
-                list(sm["cli_map"].values()),
-                key=lambda c: -(c["amount_0100"] + c["amount_opp"] + c["fact"]),
-            )
-            section_accordion.append({
-                "section":     sm["section"],
-                "amount_0100": sm["amount_0100"],
-                "amount_opp":  sm["amount_opp"],
-                "plan_total":  sm["amount_0100"] + sm["amount_opp"],
-                "fact_total":  sm["fact_total"],
-                "row_count":   sm["row_count"],
-                "max_risk":    sm["max_risk"],
-                "clients":     clients_sorted,
-                "rows":        sm["rows"],
-            })
-        section_accordion.sort(key=lambda s: -(s["plan_total"] + s["fact_total"]))
-
-    sections = conn.execute(
-        f"SELECT DISTINCT section FROM fp_rows WHERE is_active=1 AND quarter_label IN ({ql_ph}) ORDER BY section",
-        vqls,
-    ).fetchall()
-    clients = conn.execute(
-        f"SELECT DISTINCT client_name FROM fp_rows WHERE is_active=1 AND quarter_label IN ({ql_ph}) ORDER BY client_name",
-        vqls,
-    ).fetchall()
-    managers = conn.execute(
-        f"SELECT DISTINCT project_manager FROM fp_rows WHERE is_active=1 AND quarter_label IN ({ql_ph}) "
-        f"AND project_manager IS NOT NULL AND project_manager != '' ORDER BY project_manager",
-        vqls,
-    ).fetchall()
     saved_filters = conn.execute(
         "SELECT * FROM saved_filters WHERE user_id = ? ORDER BY created_at DESC", (session["user_id"],)
     ).fetchall()
 
-    # Целевой план квартала для блока сравнения в агрегированном виде
+    # Целевой план квартала для блока сравнения
     agg_target_amount = None
-    if view_mode == "aggregated" and months:
+    if months:
         period_label_agg = "-".join(months)
         trow = conn.execute(
             "SELECT target_amount FROM quarter_targets WHERE period_label = ?",
@@ -2278,23 +2196,19 @@ def rows_list():
 
     conn.close()
     return render_template(
-        "rows_list.html", rows=rows, obl_by_row=obl_by_row, sections=[s["section"] for s in sections],
-        clients=[c["client_name"] for c in clients],
-        managers=[m["project_manager"] for m in managers],
+        "rows_list.html", rows=rows, obl_by_row=obl_by_row,
+        sections=_sections_set,
+        clients=_clients_set,
+        managers=_managers_set,
         saved_filters=saved_filters, current_query_string=current_query_string,
         filters=dict(section=section, portfolio=portfolio, manager=manager, q=search,
                      unassigned=only_unassigned, client=client,
                      risk_level=risk_level, dpa_from=dpa_from, dpa_to=dpa_to),
         owner_sections=OWNER_SECTIONS, team_lead_sections=TEAM_LEAD_SECTIONS,
         today=datetime.date.today().isoformat(),
-        sort_by=sort_by, sort_dir=sort_dir, sortable_fields=SORTABLE_FIELDS,
-        group_by=group_by, groupable_fields=GROUPABLE_FIELDS, groups=groups,
-        grand_total=grand_total, group_totals=group_totals,
-        outlier_months=outlier_months, view_mode=view_mode, aggregated=aggregated,
-        client_accordion=client_accordion,
+        outlier_months=outlier_months, client_accordion=client_accordion,
         agg_sort=agg_sort, agg_dir=agg_dir, agg_sortable_fields=AGG_SORT_FIELDS,
         risk_levels=RISK_LEVELS, agg_target_amount=agg_target_amount,
-        section_accordion=section_accordion,
     )
 
 
@@ -2357,6 +2271,17 @@ def render_obligation_fragment(row_id):
 
 def _is_fetch_request():
     return request.headers.get("X-Requested-With") == "fetch"
+
+
+@app.route("/rows/<int:row_id>/obl-panel")
+@login_required
+def row_obl_panel(row_id):
+    """Ленивая загрузка панели обязательств по строке (AJAX, GET).
+    Возвращает HTML-фрагмент <tr class='obl-row'> для вставки в DOM."""
+    frag = render_obligation_fragment(row_id)
+    if frag is None:
+        return "", 404
+    return frag
 
 
 @app.route("/rows/<int:row_id>/comment", methods=["POST"])
@@ -2787,9 +2712,10 @@ def _client_similarity(name_a: str, tokens_b: frozenset):
     return len(inter) / len(union), sorted(inter)
 
 
-def _ts_build_compare(import_id, conn, emp_names=None):
+def _ts_build_compare(import_id, conn, emp_names=None, fp_quarter_labels=None):
     """
     Сопоставляет трудозатраты (ts_rows) с финпланом (fp_rows).
+    fp_quarter_labels: список quarter_label для фильтрации ФП; None = все кварталы.
     Порядок матча:
       1) По числовому номеру проекта (в начале названия ts_rows.project)
       2) По точному совпадению названия проекта
@@ -2824,15 +2750,33 @@ def _ts_build_compare(import_id, conn, emp_names=None):
     fp_by_name   = {}   # lower_name    → fp_rec
     fp_by_client = {}   # frozenset(tokens) → list[fp_rec]  (для fuzzy-клиента)
 
-    for r in conn.execute(
-        """SELECT project_num, project_name, section, client_name,
-                  SUM(crm_amount) as plan, SUM(amount_0_100) as fact
-           FROM fp_rows GROUP BY project_num"""
-    ).fetchall():
+    # Суммируем раздельно по portfolio: Факт / 0-100 / Возможности
+    _fp_case = (
+        "SUM(CASE WHEN portfolio='Факт'        THEN amount_0_100 ELSE 0 END) as fp_fact, "
+        "SUM(CASE WHEN portfolio='0-100'       THEN amount_0_100 ELSE 0 END) as fp_plan, "
+        "SUM(CASE WHEN portfolio='Возможности' THEN amount_0_100 ELSE 0 END) as fp_opp "
+    )
+    if fp_quarter_labels:
+        ql_ph = ",".join("?" * len(fp_quarter_labels))
+        fp_sql = (
+            f"SELECT project_num, project_name, section, client_name, {_fp_case}"
+            f"FROM fp_rows WHERE is_active=1 AND quarter_label IN ({ql_ph}) "
+            f"GROUP BY project_num"
+        )
+        fp_params = list(fp_quarter_labels)
+    else:
+        fp_sql = (
+            f"SELECT project_num, project_name, section, client_name, {_fp_case}"
+            f"FROM fp_rows WHERE is_active=1 GROUP BY project_num"
+        )
+        fp_params = []
+
+    for r in conn.execute(fp_sql, fp_params).fetchall():
         num_clean = re.sub(r"[\s\xa0]+", "", r["project_num"] or "")
         fp_rec = {
-            "plan":    r["plan"] or 0.0,
-            "fact":    r["fact"] or 0.0,
+            "fact":    r["fp_fact"] or 0.0,
+            "plan":    r["fp_plan"] or 0.0,
+            "opp":     r["fp_opp"]  or 0.0,
             "section": r["section"] or "",
             "client":  r["client_name"] or "",
             "fp_name": r["project_name"] or "",
@@ -2893,8 +2837,9 @@ def _ts_build_compare(import_id, conn, emp_names=None):
 
         if fp_rec:
             proj_finance[proj_name.lower()] = {
-                "plan":         fp_rec["plan"],
-                "fact":         fp_rec["fact"],
+                "fp_fact":      fp_rec["fact"],
+                "fp_plan":      fp_rec["plan"],
+                "fp_opp":       fp_rec["opp"],
                 "section":      fp_rec["section"],
                 "client_fp":    fp_rec["client"] or ts_cli,
                 "ts_client":    ts_cli,
@@ -2912,8 +2857,9 @@ def _ts_build_compare(import_id, conn, emp_names=None):
     totals = {
         "total_hours":   total_hours,
         "matched_hours": matched_hours,
-        "plan_sum":      sum(f["plan"] for f in proj_finance.values()),
-        "fact_sum":      sum(f["fact"] for f in proj_finance.values()),
+        "fp_fact_sum":   sum(f["fp_fact"] for f in proj_finance.values()),
+        "fp_plan_sum":   sum(f["fp_plan"] for f in proj_finance.values()),
+        "fp_opp_sum":    sum(f["fp_opp"]  for f in proj_finance.values()),
     }
 
     # ── Дополнительные блоки (Без моих / Мои меньше чужих) ───────────────────
@@ -2999,8 +2945,9 @@ def _ts_build_hierarchy(rows, emp_names=None, proj_finance=None):
             pm[proj] = {
                 "hours": 0.0, "my_hours": 0.0, "others_hours": 0.0,
                 "client": r["client"] or "", "work_type": r["work_type"] or "",
-                "plan":         fin.get("plan", 0.0),
-                "fact":         fin.get("fact", 0.0),
+                "fp_fact":      fin.get("fp_fact", 0.0),
+                "fp_plan":      fin.get("fp_plan", 0.0),
+                "fp_opp":       fin.get("fp_opp",  0.0),
                 "section":      fin.get("section", ""),
                 "client_fp":    fin.get("client_fp", ""),
                 "ts_client":    fin.get("ts_client", ""),
@@ -3039,7 +2986,8 @@ def _ts_build_hierarchy(rows, emp_names=None, proj_finance=None):
                 [{"name": k, "hours": v["hours"],
                   "my_hours": v["my_hours"], "others_hours": v["others_hours"],
                   "client": v["client"], "work_type": v["work_type"],
-                  "plan": v["plan"], "fact": v["fact"], "section": v["section"],
+                  "fp_fact": v["fp_fact"], "fp_plan": v["fp_plan"], "fp_opp": v["fp_opp"],
+                  "section": v["section"],
                   "client_fp": v["client_fp"], "ts_client": v["ts_client"],
                   "match_type": v["match_type"], "match_score": v["match_score"],
                   "match_tokens": v["match_tokens"]}
@@ -3108,6 +3056,9 @@ def timesheets():
     ).fetchall()
     emp_names = {e["full_name"].upper() for e in employees}
 
+    hierarchy_product   = []
+    hours_product       = 0.0
+
     if selected_import_id:
         current_import = conn.execute(
             "SELECT * FROM ts_imports WHERE id = ?", (selected_import_id,)
@@ -3116,14 +3067,32 @@ def timesheets():
             "SELECT * FROM ts_rows WHERE import_id = ? ORDER BY id",
             (selected_import_id,),
         ).fetchall()
-        hierarchy, total_hours = _ts_build_hierarchy(rows, emp_names)
+
+        # ── Разделяем строки: "по команде" vs "по продукту (другая команда)" ──
+        rp_filter_val = (ts_rp_filter or "").strip()
+        if rp_filter_val:
+            rows_product_only = [
+                r for r in rows
+                if r["rp_product"] is not None
+                and (r["rp_product"] or "").strip() == rp_filter_val
+                and (r["rp"] or "").strip() != rp_filter_val
+            ]
+            rows_main = [r for r in rows if r not in rows_product_only]
+        else:
+            rows_main         = rows
+            rows_product_only = []
+
+        hierarchy, total_hours = _ts_build_hierarchy(rows_main, emp_names)
+        if rows_product_only:
+            hierarchy_product, hours_product = _ts_build_hierarchy(rows_product_only, emp_names)
+
         import_emp_names = {r["employee"].upper() for r in rows if r["employee"]}
 
-        # Классифицируем проекты: мои vs чужие
+        # Классифицируем проекты: мои vs чужие (только из rows_main)
         if emp_names:
             proj_mine   = {}
             proj_others = {}
-            for r in rows:
+            for r in rows_main:
                 emp_up = (r["employee"] or "—").upper()
                 proj   = r["project"] or "—"
                 proj_mine.setdefault(proj, 0.0)
@@ -3141,8 +3110,8 @@ def timesheets():
                 if proj_mine[p] > 0 and proj_mine[p] < proj_others.get(p, 0)
             }
 
-            rows_no_mine   = [r for r in rows if (r["project"] or "—") in no_mine_projs]
-            rows_less_mine = [r for r in rows if (r["project"] or "—") in less_mine_projs]
+            rows_no_mine   = [r for r in rows_main if (r["project"] or "—") in no_mine_projs]
+            rows_less_mine = [r for r in rows_main if (r["project"] or "—") in less_mine_projs]
             hierarchy_no_mine,   hours_no_mine   = _ts_build_hierarchy(rows_no_mine,   emp_names)
             hierarchy_less_mine, hours_less_mine = _ts_build_hierarchy(rows_less_mine, emp_names)
 
@@ -3158,6 +3127,8 @@ def timesheets():
         hours_no_mine=hours_no_mine,
         hierarchy_less_mine=hierarchy_less_mine,
         hours_less_mine=hours_less_mine,
+        hierarchy_product=hierarchy_product,
+        hours_product=hours_product,
         employees=employees,
         emp_names=emp_names,
         import_emp_names=import_emp_names,
@@ -3185,7 +3156,7 @@ def ts_import():
     conn_cfg.close()
 
     try:
-        rows = parse_ts_file(str(tmp_path), rp_filter=ts_rp_filter, pc_filter=ts_pc_filter)
+        rows, file_type = parse_ts_file(str(tmp_path), rp_filter=ts_rp_filter, pc_filter=ts_pc_filter)
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
@@ -3210,25 +3181,26 @@ def ts_import():
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO ts_imports (filename, period_label, imported_by, rows_total, rp_filter, pc_filter) VALUES (?,?,?,?,?,?)",
-        (filename, period_label, session.get("user_id"), len(rows), ts_rp_filter, ts_pc_filter),
+        "INSERT INTO ts_imports (filename, period_label, imported_by, rows_total, rp_filter, pc_filter, file_type) VALUES (?,?,?,?,?,?,?)",
+        (filename, period_label, session.get("user_id"), len(rows), ts_rp_filter, ts_pc_filter, file_type),
     )
     import_id = cur.lastrowid
 
     for r in rows:
         cur.execute(
             """INSERT INTO ts_rows
-               (import_id, rp, dept, division, employee, project, task,
+               (import_id, rp, rp_product, dept, division, employee, project, task,
                 client, project_type, work_type, hours)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (import_id, r["rp"], r["dept"], r["division"], r["employee"],
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (import_id, r["rp"], r.get("rp_product"), r["dept"], r["division"], r["employee"],
              r["project"], r["task"], r["client"],
              r["project_type"], r["work_type"], r["hours"]),
         )
 
     conn.commit()
     conn.close()
-    flash(f"Импортировано {len(rows)} строк за период «{period_label}»", "success")
+    type_label = "Детализация до задачи" if file_type == "detail" else "Отчёт проектного офиса"
+    flash(f"Импортировано {len(rows)} строк за период «{period_label}» [{type_label}]", "success")
     return redirect(url_for("timesheets", import_id=import_id))
 
 
@@ -3358,9 +3330,20 @@ def ts_compare():
     employees = conn.execute("SELECT * FROM my_employees ORDER BY full_name").fetchall()
     emp_names = {e["full_name"].upper() for e in employees}
 
+    # Квартал ФП для сравнения: из GET-параметра fp_quarter, иначе текущий view_quarter
+    fp_quarter = request.args.get("fp_quarter", "").strip()
+    if not fp_quarter:
+        fp_quarter = get_view_quarter(conn)
+
+    # Квартал "все" позволяет сравнивать без фильтра
+    if fp_quarter == "__all__":
+        fp_quarter_labels = None
+    else:
+        fp_quarter_labels = [fp_quarter] if fp_quarter else None
+
     hierarchy = []
     total_hours = 0.0
-    totals = {"total_hours": 0, "matched_hours": 0, "plan_sum": 0, "fact_sum": 0}
+    totals = {"total_hours": 0, "matched_hours": 0, "fp_fact_sum": 0, "fp_plan_sum": 0, "fp_opp_sum": 0}
     hierarchy_no_mine   = []
     hours_no_mine       = 0.0
     hierarchy_less_mine = []
@@ -3372,10 +3355,14 @@ def ts_compare():
         ).fetchone()
         (hierarchy, total_hours, totals,
          hierarchy_no_mine, hours_no_mine,
-         hierarchy_less_mine, hours_less_mine) = _ts_build_compare(selected_import_id, conn, emp_names)
+         hierarchy_less_mine, hours_less_mine) = _ts_build_compare(
+            selected_import_id, conn, emp_names,
+            fp_quarter_labels=fp_quarter_labels,
+        )
 
     daily_rate = float(get_setting(conn, "ts_daily_rate") or 0)
     cmp_rp_filter = get_setting(conn, "ts_rp_filter") or ""
+    fp_quarters = get_available_quarters(conn)
     conn.close()
     return render_template(
         "ts_compare.html",
@@ -3392,6 +3379,8 @@ def ts_compare():
         hierarchy_less_mine=hierarchy_less_mine,
         hours_less_mine=hours_less_mine,
         rp_filter=cmp_rp_filter,
+        fp_quarter=fp_quarter,
+        fp_quarters=fp_quarters,
     )
 
 

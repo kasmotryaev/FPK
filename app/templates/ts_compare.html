@@ -77,16 +77,17 @@
                     <th class="cmp-th-num">Часов</th>
                     <th class="cmp-th-num">Дней</th>
                     {% if daily_rate %}<th class="cmp-th-num">Стоимость</th>{% endif %}
-                    <th class="cmp-th-num">План ФП</th>
-                    <th class="cmp-th-num">Факт ФП</th>
-                    {% if daily_rate %}<th class="cmp-th-num">Δ план−стоим.</th>{% endif %}
+                    <th class="cmp-th-num" title="Портфель «Факт»">Факт</th>
+                    <th class="cmp-th-num" title="Портфель «0-100»">0-100</th>
+                    <th class="cmp-th-num" title="Портфель «Возможности»">Возм.</th>
+                    {% if daily_rate %}<th class="cmp-th-num">Δ 0-100−стоим.</th>{% endif %}
                   </tr>
                 </thead>
                 <tbody>
                   {% for proj in div.projects %}
                   {% set days = proj.hours / 8 %}
                   {% set cost = days * daily_rate %}
-                  {% set delta = proj.plan - cost if (proj.match_type and daily_rate) else none %}
+                  {% set delta = proj.fp_plan - cost if (proj.match_type and daily_rate) else none %}
                   <tr class="cmp-proj-row {{ 'cmp-row-unmatched' if not proj.match_type else 'cmp-row-matched' }}">
                     <td class="cmp-td-name">
                       <div class="cmp-proj-cell">
@@ -120,14 +121,16 @@
                     <td class="cmp-td-num cmp-cost">{{ "{:,.0f}".format(cost).replace(",", " ") }}</td>
                     {% endif %}
                     {% if proj.match_type %}
-                    <td class="cmp-td-num cmp-plan">{{ "{:,.0f}".format(proj.plan).replace(",", " ") }}</td>
-                    <td class="cmp-td-num cmp-fact">{{ "{:,.0f}".format(proj.fact).replace(",", " ") }}</td>
+                    <td class="cmp-td-num cmp-fact">{{ "{:,.0f}".format(proj.fp_fact).replace(",", " ") if proj.fp_fact else "—" }}</td>
+                    <td class="cmp-td-num cmp-plan">{{ "{:,.0f}".format(proj.fp_plan).replace(",", " ") if proj.fp_plan else "—" }}</td>
+                    <td class="cmp-td-num cmp-opp">{{ "{:,.0f}".format(proj.fp_opp).replace(",", " ")  if proj.fp_opp  else "—" }}</td>
                     {% if daily_rate %}
                     <td class="cmp-td-num {{ 'cmp-pos' if delta is not none and delta >= 0 else 'cmp-neg' if delta is not none else '' }}">
                       {% if delta is not none %}{{ ('+' if delta >= 0 else '') + "{:,.0f}".format(delta).replace(",", " ") }}{% else %}—{% endif %}
                     </td>
                     {% endif %}
                     {% else %}
+                    <td class="cmp-td-num cmp-muted">—</td>
                     <td class="cmp-td-num cmp-muted">—</td>
                     <td class="cmp-td-num cmp-muted">—</td>
                     {% if daily_rate %}<td class="cmp-td-num cmp-muted">—</td>{% endif %}
@@ -151,7 +154,10 @@
 {# ════════════════════════════════════════════════════════ #}
 
 <div class="page-header">
-  <h1 class="page-title">Расходы vs Доходы · {{ rp_filter }}</h1>
+  <h1 class="page-title">
+    Расходы vs Доходы
+    {% if rp_filter %}<span class="ts-filter-badge">РП: {{ rp_filter }}</span>{% endif %}
+  </h1>
   <p class="page-subtitle">Сопоставление трудозатрат с финансовым планом</p>
 </div>
 
@@ -179,13 +185,36 @@
   </details>
   {% endif %}
 
+  {# ── Выбор квартала ФП ─────────────────────────────────── #}
+  {% if fp_quarters %}
+  <div class="ts-import-selector">
+    <span class="ts-label">Квартал ФП:</span>
+    <div class="ts-import-list">
+      <a href="{{ url_for('ts_compare', import_id=selected_import_id, fp_quarter='__all__') }}"
+         class="ts-import-chip {{ 'ts-import-chip-active' if fp_quarter == '__all__' }}">
+        Все
+      </a>
+      {% for q in fp_quarters %}
+      <a href="{{ url_for('ts_compare', import_id=selected_import_id, fp_quarter=q.label) }}"
+         class="ts-import-chip {{ 'ts-import-chip-active' if q.label == fp_quarter }}">
+        {{ q.label }}
+        {% if q.is_finalized %} 🔒{% endif %}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Выбор периода ТЗ ──────────────────────────────────── #}
   {% if imports %}
   <div class="ts-import-selector">
-    <span class="ts-label">Период:</span>
+    <span class="ts-label">Период ТЗ:</span>
     <div class="ts-import-list">
       {% for imp in imports %}
-      <a href="{{ url_for('ts_compare', import_id=imp.id) }}"
+      <a href="{{ url_for('ts_compare', import_id=imp.id, fp_quarter=fp_quarter) }}"
          class="ts-import-chip {{ 'ts-import-chip-active' if imp.id == selected_import_id }}">
+        {% if imp.file_type == 'detail' %}<span class="ts-type-badge ts-type-dz" title="Детализация до задачи">ДЗ</span>
+        {% else %}<span class="ts-type-badge ts-type-po" title="Отчёт проектного офиса">ПО</span>{% endif %}
         {{ imp.period_label or imp.filename }}
         <span class="ts-chip-count">{{ imp.rows_total }}</span>
       </a>
@@ -218,6 +247,10 @@
     <span class="ts-sum-val">{{ "%.1f"|format(totals.total_hours) }}</span>
   </div>
   <div class="ts-sum-item">
+    <span class="ts-sum-label">Квартал ФП</span>
+    <span class="ts-sum-val" style="font-size:13px">{{ 'Все' if fp_quarter == '__all__' else (fp_quarter or '—') }}</span>
+  </div>
+  <div class="ts-sum-item">
     <span class="ts-sum-label">Сопоставлено, ч</span>
     <span class="ts-sum-val">{{ "%.1f"|format(totals.matched_hours) }}</span>
   </div>
@@ -225,13 +258,17 @@
     <span class="ts-sum-label">% сопоставлено</span>
     <span class="ts-sum-val">{{ "%.0f"|format(totals.matched_hours / totals.total_hours * 100 if totals.total_hours else 0) }}%</span>
   </div>
-  <div class="ts-sum-item">
-    <span class="ts-sum-label">План ФП</span>
-    <span class="ts-sum-val">{{ "{:,.0f}".format(totals.plan_sum).replace(",", " ") }} ₽</span>
-  </div>
-  <div class="ts-sum-item">
+  <div class="ts-sum-item" title="Портфель «Факт»">
     <span class="ts-sum-label">Факт ФП</span>
-    <span class="ts-sum-val">{{ "{:,.0f}".format(totals.fact_sum).replace(",", " ") }} ₽</span>
+    <span class="ts-sum-val">{{ "{:,.0f}".format(totals.fp_fact_sum).replace(",", " ") }} ₽</span>
+  </div>
+  <div class="ts-sum-item" title="Портфель «0-100»">
+    <span class="ts-sum-label">0-100 ФП</span>
+    <span class="ts-sum-val">{{ "{:,.0f}".format(totals.fp_plan_sum).replace(",", " ") }} ₽</span>
+  </div>
+  <div class="ts-sum-item" title="Портфель «Возможности»">
+    <span class="ts-sum-label">Возм. ФП</span>
+    <span class="ts-sum-val">{{ "{:,.0f}".format(totals.fp_opp_sum).replace(",", " ") }} ₽</span>
   </div>
   {% if daily_rate %}
   <div class="ts-sum-item">

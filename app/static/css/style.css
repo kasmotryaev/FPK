@@ -1084,11 +1084,39 @@ select.status-select { font-size: 12px; padding: 4px 8px; border-radius: 6px; fo
 
 /* Числа в таблице проектов */
 .cmp-cost { color: var(--ink-600); }
-.cmp-plan { color: var(--ink-500); }
 .cmp-fact { color: var(--accent); font-weight: 600; }
+.cmp-plan { color: var(--ink-700); }
+.cmp-opp  { color: var(--ink-400); }
 .cmp-muted { color: var(--ink-300); }
 .cmp-pos { color: var(--green, #27ae60); font-weight: 600; }
 .cmp-neg { color: var(--red,   #e74c3c); font-weight: 600; }
+
+/* ── Тип импорта [ПО] / [ДЗ] ───────────────────────────────── */
+.ts-type-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  vertical-align: middle;
+  margin-right: 3px;
+  line-height: 1.4;
+}
+.ts-type-po {
+  background: var(--ink-200, #dde2ea);
+  color: var(--ink-600, #4b5563);
+}
+.ts-type-dz {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+/* ── Блок «По продукту — другая команда» ───────────────────── */
+.ts-extra-product .ts-extra-hdr {
+  border-left: 3px solid #3b82f6;
+  background: rgba(59, 130, 246, .06);
+}
 
 /* Строки: сопоставлена / нет */
 .cmp-row-unmatched { opacity: 0.6; }

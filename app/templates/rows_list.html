@@ -10,7 +10,7 @@
         Доп. фильтр с дашборда:
         {% if filters.dpa_from or filters.dpa_to %}ДПА {{ filters.dpa_from or '…' }} — {{ filters.dpa_to or '…' }}{% endif %}
         {% if filters.risk_level %}{{ ' · ' if filters.dpa_from or filters.dpa_to }}риск: {{ filters.risk_level | map('string') | join(', ') }}{% endif %}
-        · <a href="{{ url_for('rows_list', section=filters.section, portfolio=filters.portfolio, manager=filters.manager, client=filters.client, q=filters.q, unassigned=('1' if filters.unassigned else None), group=group_by, sort=sort_by, dir=sort_dir, view=view_mode) }}">сбросить</a>
+        · <a href="{{ url_for('rows_list', section=filters.section, portfolio=filters.portfolio, manager=filters.manager, client=filters.client, q=filters.q, unassigned=('1' if filters.unassigned else None)) }}">сбросить</a>
       </div>
     {% endif %}
   </div>
@@ -20,17 +20,6 @@
 <div id="obl-ajax-error" class="tag tag-danger" style="display:none; position:fixed; bottom:18px; right:18px; z-index:999; box-shadow:var(--shadow);"></div>
 
 {% macro ms_summary(selected, all_label) %}{% if selected %}{{ selected|length }} выбрано{% else %}{{ all_label }}{% endif %}{% endmacro %}
-
-{% macro view_link(view_value, label) %}
-  <a href="{{ url_for('rows_list', section=filters.section, portfolio=filters.portfolio, manager=filters.manager, client=filters.client, q=filters.q, unassigned=('1' if filters.unassigned else None), risk_level=filters.risk_level, dpa_from=filters.dpa_from, dpa_to=filters.dpa_to, group=group_by, sort=sort_by, dir=sort_dir, asort=agg_sort, adir=agg_dir, view=view_value) }}"
-     class="btn btn-sm {{ 'btn-primary' if view_mode == view_value else '' }}">{{ label }}</a>
-{% endmacro %}
-
-<div class="card section-block" style="display:flex; gap:8px;">
-  {{ view_link('accordion', 'По разделам') }}
-  {{ view_link('aggregated', 'Агрегировано по клиентам') }}
-  {{ view_link('detail', 'Детально') }}
-</div>
 
 <div class="saved-filters-bar card">
   <span class="muted" style="font-size:12.5px">Мои фильтры:</span>
@@ -110,78 +99,13 @@
   <input type="text" name="q" placeholder="Поиск: клиент / проект / договор" value="{{ filters.q }}">
   <label><input type="checkbox" name="unassigned" value="1" {{ 'checked' if filters.unassigned }}> Только без оформленного обязательства</label>
 
-  {% if view_mode != 'aggregated' %}
-  <select name="group" onchange="this.form.submit()">
-    {% for key, label in groupable_fields.items() %}
-      <option value="{{ key }}" {{ 'selected' if group_by == key }}>Группировка: {{ label }}</option>
-    {% endfor %}
-  </select>
-  {% endif %}
-  <input type="hidden" name="view" value="{{ view_mode }}">
-  <input type="hidden" name="sort" value="{{ sort_by }}">
-  <input type="hidden" name="dir" value="{{ sort_dir }}">
-  <input type="hidden" name="asort" value="{{ agg_sort }}">
-  <input type="hidden" name="adir" value="{{ agg_dir }}">
   <input type="hidden" name="dpa_from" value="{{ filters.dpa_from }}">
   <input type="hidden" name="dpa_to" value="{{ filters.dpa_to }}">
   {% for rl in filters.risk_level %}<input type="hidden" name="risk_level" value="{{ rl }}">{% endfor %}
   <button class="btn btn-sm btn-primary" type="submit">Применить</button>
 </form>
 
-{% macro sort_link(field, label) %}
-  {% set next_dir = 'desc' if (sort_by == field and sort_dir == 'asc') else 'asc' %}
-  <a href="{{ url_for('rows_list', section=filters.section, portfolio=filters.portfolio, manager=filters.manager, client=filters.client, q=filters.q, unassigned=('1' if filters.unassigned else None), risk_level=filters.risk_level, dpa_from=filters.dpa_from, dpa_to=filters.dpa_to, group=group_by, sort=field, dir=next_dir) }}"
-     style="color:inherit; text-decoration:none;">
-    {{ label }}{% if sort_by == field %}{{ ' ▲' if sort_dir == 'asc' else ' ▼' }}{% endif %}
-  </a>
-{% endmacro %}
-
-{% macro agg_sort_link(field, label) %}
-  {% set next_dir = 'desc' if (agg_sort == field and agg_dir == 'asc') else 'asc' %}
-  <a href="{{ url_for('rows_list', section=filters.section, portfolio=filters.portfolio, manager=filters.manager, client=filters.client, q=filters.q, unassigned=('1' if filters.unassigned else None), risk_level=filters.risk_level, dpa_from=filters.dpa_from, dpa_to=filters.dpa_to, group=group_by, sort=sort_by, dir=sort_dir, view='aggregated', asort=field, adir=next_dir) }}"
-     style="color:inherit; text-decoration:none;">
-    {{ label }}{% if agg_sort == field %}{{ ' ▲' if agg_dir == 'asc' else ' ▼' }}{% endif %}
-  </a>
-{% endmacro %}
-
-{% from "_obligations_fragment.html" import render_obligations with context %}
-
-{% macro render_row(r) %}
-  <tr class="row-toggle{{ ' row-risk-' + risk_levels[r.risk_level].css if r.risk_level else '' }}" id="row-{{ r.id }}" onclick="toggleObl({{ r.id }})" style="cursor:pointer">
-    <td><span class="client-link">{{ r.client_name }}</span>{% if r.month in outlier_months %} <span class="tag tag-warn" title="Месяц вне основного квартала">{{ r.month }}</span>{% endif %}</td>
-    <td>{{ r.contract_num }}</td>
-    <td>{{ r.project_num or '—' }}</td>
-    <td>{{ r.project_name }}</td>
-    <td><span class="tag tag-neutral">{{ r.section }}</span></td>
-    <td>{{ r.project_manager or '—' }}</td>
-    <td>
-      {% if r.dpa_date and r.dpa_date < today and r.portfolio != 'Факт' %}
-        <span class="tag tag-danger">{{ r.dpa_date }}</span>
-      {% else %}
-        {{ r.dpa_date or '—' }}
-      {% endif %}
-    </td>
-    <td class="num">{{ "{:,.0f}".format(r.amount_0_100 or 0).replace(',', ' ') }} ₽</td>
-    <td>
-      {% if r.portfolio == 'Факт' %}<span class="tag tag-ok">Факт</span>
-      {% elif r.portfolio == 'Возможности' %}<span class="tag tag-neutral">Возможности</span>
-      {% else %}<span class="tag tag-warn">0‑100</span>{% endif %}
-    </td>
-  </tr>
-  {{ render_obligations(r) }}
-{% endmacro %}
-
-{% macro totals_row(t, label, colspan_label=7) %}
-  <tr style="font-weight:700; background:var(--ink-100);">
-    <td colspan="{{ colspan_label }}">{{ label }} ({{ t.count }} стр.)</td>
-    <td class="num">{{ "{:,.0f}".format(t.get('Факт',0) + t.get('0-100',0) + t.get('Возможности',0)).replace(',', ' ') }} ₽</td>
-    <td style="font-size:11.5px; color:var(--ink-500); font-weight:500;">
-      Факт {{ "{:,.0f}".format(t.get('Факт',0)).replace(',', ' ') }} · 0‑100 {{ "{:,.0f}".format(t.get('0-100',0)).replace(',', ' ') }} · Возм. {{ "{:,.0f}".format(t.get('Возможности',0)).replace(',', ' ') }}
-    </td>
-  </tr>
-{% endmacro %}
-
-{% if view_mode == 'aggregated' %}
+{# Обязательства загружаются лениво через AJAX — не импортируем макрос #}
 
 {# ── Сводная строка ── #}
 {% if client_accordion %}
@@ -231,7 +155,7 @@
       </span>
       <span class="fp-cli-col-metric">
         <span class="fp-cli-m-lbl">Возможности, ₽</span>
-        <span class="fp-cli-m-val fp-cli-m-opp">{{ "+ " + "{:,.0f}".format(cli.amount_opp).replace(",", " ") if cli.amount_opp else "—" }}</span>
+        <span class="fp-cli-m-val fp-cli-m-opp">{{ "+ " + "{:,.0f}".format(cli.amount_opp).replace(",", " ") if cli.amount_opp else "—" }}</span>
       </span>
       <span class="fp-cli-col-metric">
         <span class="fp-cli-m-lbl">Факт, ₽</span>
@@ -301,7 +225,7 @@
                   {% endfor %}
                 </select>
               </td>
-              {# ── inline comment (visible) + edit popover ── #}
+              {# ── inline comment ── #}
               <td class="agg-ctrl-comment">
                 <div class="agg-comment-wrap">
                   <details class="agg-comment-pop" id="cmnt-{{ r.id }}">
@@ -321,10 +245,11 @@
               </td>
               {# ── obligations count badge ── #}
               <td class="agg-ctrl-obl">
-                {% set obl_count = obl_by_row.get(r.id, [])|length %}
-                <a href="{{ url_for('rows_list', view='detail') }}#row-{{ r.id }}"
-                   class="agg-obl-badge {{ 'agg-obl-has' if obl_count }}"
-                   title="Обязательства (открыть в детальном виде)">{{ obl_count if obl_count else '+' }}</a>
+                {% set obl_count = obl_by_row.get(r.id, 0) %}
+                <button class="agg-obl-badge {{ 'agg-obl-has' if obl_count }}"
+                        onclick="toggleObl({{ r.id }})"
+                        data-count="{{ obl_count }}"
+                        title="Обязательства">{{ obl_count if obl_count else '+' }}</button>
               </td>
             </tr>
             {% endfor %}
@@ -342,174 +267,6 @@
   {% endif %}
 </div>
 
-{% elif view_mode == 'accordion' %}
-
-{# ── Сводная строка аккордеона ── #}
-{% if section_accordion %}
-{% set acc_0100 = section_accordion | sum(attribute='amount_0100') %}
-{% set acc_opp  = section_accordion | sum(attribute='amount_opp') %}
-{% set acc_fact = section_accordion | sum(attribute='fact_total') %}
-{% set acc_plan = acc_0100 + acc_opp %}
-<div class="ts-summary-bar" style="margin-bottom:12px">
-  <div class="ts-sum-item ts-sum-total">
-    <span class="ts-sum-label">0‑100</span>
-    <span class="ts-sum-val">{{ "%.1f"|format(acc_0100 / 1e6) }} М₽</span>
-  </div>
-  <div class="ts-sum-item">
-    <span class="ts-sum-label">Возможности</span>
-    <span class="ts-sum-val">{{ "%.1f"|format(acc_opp / 1e6) }} М₽</span>
-  </div>
-  <div class="ts-sum-item">
-    <span class="ts-sum-label">Итого план</span>
-    <span class="ts-sum-val" style="color:var(--accent)">{{ "%.1f"|format(acc_plan / 1e6) }} М₽</span>
-  </div>
-  <div class="ts-sum-item">
-    <span class="ts-sum-label">Факт</span>
-    <span class="ts-sum-val" style="color:var(--green,#27ae60)">{{ "%.1f"|format(acc_fact / 1e6) }} М₽</span>
-  </div>
-  <div class="ts-sum-item" style="margin-left:auto">
-    <span class="ts-sum-label">Разделов</span>
-    <span class="ts-sum-val">{{ section_accordion|length }}</span>
-  </div>
-  <div class="ts-sum-item">
-    <span class="ts-sum-label">Строк</span>
-    <span class="ts-sum-val">{{ rows|length }}</span>
-  </div>
-</div>
-{% endif %}
-
-{# ── Аккордеон: раздел → клиенты / строки ── #}
-<div class="fp-accordion">
-  {% for sec in section_accordion %}
-  {% set sec_plan = sec.plan_total %}
-  <details class="fp-sec-block">
-    <summary class="fp-sec-head">
-      <span class="fp-sec-name">{{ sec.section }}</span>
-      <span class="fp-sec-bar-wrap">
-        <span class="fp-sec-bar" style="width:{{ (sec_plan / acc_plan * 100 if acc_plan else 0)|round(1) }}%"></span>
-      </span>
-      <span class="fp-sec-amounts">
-        <span class="fp-sec-plan">{{ "%.1f"|format(sec.amount_0100 / 1e6) }} М₽</span>
-        {% if sec.amount_opp %}<span class="fp-sec-opp">+ {{ "%.1f"|format(sec.amount_opp / 1e6) }} возм.</span>{% endif %}
-        {% if sec.fact_total %}<span class="fp-sec-fact">· ф {{ "%.1f"|format(sec.fact_total / 1e6) }}</span>{% endif %}
-      </span>
-      {% if sec.max_risk %}<span class="tag risk-tag risk-{{ risk_levels[sec.max_risk].css }}" style="font-size:11px;flex-shrink:0">{{ risk_levels[sec.max_risk].label }}</span>{% endif %}
-      <span class="fp-sec-count">{{ sec.clients|length }} кл · {{ sec.row_count }} стр.</span>
-    </summary>
-
-    <div class="fp-sec-tabs">
-      <div class="fp-tab-buttons">
-        <button class="fp-tab-btn fp-tab-active" onclick="fpTab(this,'clients')">
-          👥 Клиенты <span class="fp-tab-cnt">{{ sec.clients|length }}</span>
-        </button>
-        <button class="fp-tab-btn" onclick="fpTab(this,'rows')">
-          📋 Строки <span class="fp-tab-cnt">{{ sec.row_count }}</span>
-        </button>
-      </div>
-
-      {# ── Вкладка Клиенты ── #}
-      <div class="fp-tab-pane fp-tab-clients">
-        {% for cli in sec.clients %}
-        <div class="fp-cli-row">
-          <span class="fp-cli-name">{{ cli.name }}</span>
-          {% if cli.amount_0100 %}<span class="fp-cli-0100">{{ "%.1f"|format(cli.amount_0100/1e6) }} М₽</span>{% endif %}
-          {% if cli.amount_opp %}<span class="fp-cli-opp">+{{ "%.1f"|format(cli.amount_opp/1e6) }} возм.</span>{% endif %}
-          {% if cli.fact %}<span class="fp-cli-fact">ф {{ "%.1f"|format(cli.fact/1e6) }}</span>{% endif %}
-          <span class="fp-cli-count">{{ cli.row_count }} стр.</span>
-          {% if cli.max_risk %}<span class="tag risk-tag risk-{{ risk_levels[cli.max_risk].css }}" style="font-size:10px;padding:1px 5px;flex-shrink:0">{{ risk_levels[cli.max_risk].label }}</span>{% endif %}
-        </div>
-        {% endfor %}
-      </div>
-
-      {# ── Вкладка Строки ── #}
-      <div class="fp-tab-pane fp-tab-rows" style="display:none">
-        <div class="table-wrap">
-        <table class="fp-sec-table">
-          <thead>
-            <tr>
-              <th>Клиент</th>
-              <th>Проект</th>
-              <th>Менеджер</th>
-              <th>ДПА</th>
-              <th class="num">Сумма, ₽</th>
-              <th>Порт.</th>
-              <th>Риск</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for r in sec.rows %}
-            <tr class="row-toggle{{ ' row-risk-' + risk_levels[r.risk_level].css if r.risk_level else '' }}"
-                id="row-{{ r.id }}" onclick="toggleObl({{ r.id }})" style="cursor:pointer">
-              <td>{{ r.client_name }}</td>
-              <td title="{{ r.project_name }}">{{ r.project_name }}</td>
-              <td>{{ r.project_manager or '—' }}</td>
-              <td>
-                {% if r.dpa_date and r.dpa_date < today and r.portfolio != 'Факт' %}
-                  <span class="tag tag-danger" style="font-size:11px">{{ r.dpa_date }}</span>
-                {% else %}{{ r.dpa_date or '—' }}{% endif %}
-              </td>
-              <td class="num">{{ "{:,.0f}".format(r.amount_0_100 or 0).replace(',', ' ') }}</td>
-              <td>
-                {% if r.portfolio == 'Факт' %}<span class="tag tag-ok" style="font-size:10px">Факт</span>
-                {% elif r.portfolio == 'Возможности' %}<span class="tag tag-neutral" style="font-size:10px">Возм.</span>
-                {% else %}<span class="tag tag-warn" style="font-size:10px">0‑100</span>{% endif %}
-              </td>
-              <td>{% if r.risk_level %}<span class="tag risk-tag risk-{{ risk_levels[r.risk_level].css }}" style="font-size:10px;padding:1px 5px">{{ risk_levels[r.risk_level].label }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
-            </tr>
-            {{ render_obligations(r) }}
-            {% endfor %}
-          </tbody>
-        </table>
-        </div>
-      </div>
-    </div>
-  </details>
-  {% endfor %}
-
-  {% if not section_accordion %}
-  <div class="empty-state"><div class="big">∅</div>Нет строк по выбранным фильтрам</div>
-  {% endif %}
-</div>
-
-{% else %}
-<div class="card">
-  <table>
-    <thead>
-      <tr>
-        <th>{{ sort_link('client_name', 'Клиент') }}</th>
-        <th>{{ sort_link('contract_num', 'Договор') }}</th>
-        <th>{{ sort_link('project_num', 'Номер проекта') }}</th>
-        <th>{{ sort_link('project_name', 'Проект') }}</th>
-        <th>{{ sort_link('section', 'Раздел') }}</th>
-        <th>{{ sort_link('project_manager', 'Менеджер') }}</th>
-        <th>{{ sort_link('dpa_date', 'ДПА') }}</th>
-        <th class="num">{{ sort_link('amount_0_100', 'Сумма 0‑100') }}</th>
-        <th>{{ sort_link('portfolio', 'Портфель') }}</th>
-      </tr>
-    </thead>
-    <tbody>
-      <!-- Общий итог сверху для удобной ориентации в большом массиве -->
-      {{ totals_row(grand_total, 'ИТОГО ПО ФИЛЬТРУ') }}
-
-      {% if groups %}
-        {% for group_key, group_rows in groups.items() %}
-          {{ totals_row(group_totals[group_key], 'Подытог: ' + group_key) }}
-          <tr style="background:var(--ink-100);">
-            <td colspan="9" style="font-weight:700; padding-top:8px;">{{ group_key }}</td>
-          </tr>
-          {% for r in group_rows %}{{ render_row(r) }}{% endfor %}
-        {% endfor %}
-      {% else %}
-        {% for r in rows %}{{ render_row(r) }}{% endfor %}
-      {% endif %}
-    </tbody>
-  </table>
-  {% if not rows %}
-    <div class="empty-state"><div class="big">∅</div>Нет строк по выбранным фильтрам</div>
-  {% endif %}
-</div>
-{% endif %}
-
 <script>
 function fpTab(btn, tab) {
   var c = btn.closest('.fp-sec-tabs') || btn.closest('.fp-cli-body');
@@ -520,7 +277,6 @@ function fpTab(btn, tab) {
   });
 }
 
-/* ── Inline risk select (агрегировано по клиентам) ── */
 function agjRisk(rowId, sel) {
   var level = sel.value;
   var opt = sel.options[sel.selectedIndex];
@@ -541,7 +297,6 @@ function agjRisk(rowId, sel) {
   }).catch(function() {});
 }
 
-/* ── Inline comment popover (агрегировано по клиентам) ── */
 function agjComment(event, rowId, form) {
   event.preventDefault();
   var comment = form.querySelector('[name=comment]').value;
@@ -562,15 +317,34 @@ function agjComment(event, rowId, form) {
   }).catch(function() {});
 }
 
-
 function toggleObl(rowId) {
   var el = document.getElementById('obl-' + rowId);
-  if (!el) return;
-  el.style.display = (el.style.display === 'none' || !el.style.display) ? 'table-row' : 'none';
+  if (el) {
+    // уже загружено — просто переключить видимость
+    el.style.display = (el.style.display === 'none' || !el.style.display) ? 'table-row' : 'none';
+    return;
+  }
+  // Первый раз — загружаем панель с сервера
+  var srcRow = document.getElementById('row-' + rowId);
+  if (!srcRow) return;
+  var btn = srcRow.querySelector('.agg-obl-badge');
+  if (btn) btn.textContent = '…';
+  fetch('/rows/' + rowId + '/obl-panel', {
+    headers: {'X-Requested-With': 'fetch'}
+  }).then(function(r) { return r.text(); }).then(function(html) {
+    var tmp = document.createElement('tbody');
+    tmp.innerHTML = html;
+    var obl = tmp.querySelector('tr.obl-row');
+    if (obl) {
+      obl.style.display = 'table-row';
+      srcRow.insertAdjacentElement('afterend', obl);
+    }
+    if (btn) btn.textContent = btn.classList.contains('agg-obl-has') ? btn.dataset.count || '1' : '+';
+  }).catch(function() {
+    if (btn) btn.textContent = '!';
+  });
 }
 
-// Поиск внутри попапов «Клиент»/«Менеджер»: просто скрывает не подходящие пункты списка,
-// набор доступных значений не меняется -- только то, что видно при наборе текста.
 function filterPopoverOptions(input) {
   var query = input.value.trim().toLowerCase();
   var options = input.nextElementSibling;
@@ -581,7 +355,6 @@ function filterPopoverOptions(input) {
     labels[i].style.display = (!query || text.indexOf(query) !== -1) ? '' : 'none';
   }
 }
-// При закрытии попапа сбрасываем поле поиска, чтобы при следующем открытии был виден весь список.
 Array.prototype.forEach.call(document.querySelectorAll('.popover'), function (det) {
   det.addEventListener('toggle', function () {
     if (det.open) return;
@@ -593,12 +366,6 @@ Array.prototype.forEach.call(document.querySelectorAll('.popover'), function (de
   });
 });
 
-// Действия внутри панели обязательств (комментарий, риск, статус, ответственный,
-// добавление/удаление обязательства) отправляются через fetch и подменяют только саму
-// панель -- без перезагрузки страницы, без потери позиции скролла и без сворачивания
-// других открытых строк. Сервер при заголовке X-Requested-With: fetch отвечает тем же
-// HTML-фрагментом, что обычно рендерится внутри страницы (см. _obligations_fragment.html),
-// так что результат идентичен обычной перезагрузке -- меняется только способ доставки.
 (function () {
   var errorBox = document.getElementById('obl-ajax-error');
   var errorTimer = null;
@@ -620,8 +387,6 @@ Array.prototype.forEach.call(document.querySelectorAll('.popover'), function (de
     if (form.dataset.confirm && !confirm(form.dataset.confirm)) return;
 
     var rowId = form.dataset.rowId;
-    // FormData снимается ДО блокировки полей: disabled-поля не попадают в FormData,
-    // из-за чего textarea с комментарием отправлялась как пустая строка.
     var formData = new FormData(form);
     setFormBusy(form, true);
 
@@ -636,9 +401,7 @@ Array.prototype.forEach.call(document.querySelectorAll('.popover'), function (de
           throw new Error((data && data.error) || 'Ошибка запроса');
         });
       }
-      if (!r.ok) {
-        throw new Error('Ошибка запроса (' + r.status + ')');
-      }
+      if (!r.ok) { throw new Error('Ошибка запроса (' + r.status + ')'); }
       return r.text();
     }).then(function (html) {
       var rowEl = document.getElementById('obl-' + rowId);
@@ -657,7 +420,6 @@ Array.prototype.forEach.call(document.querySelectorAll('.popover'), function (de
   });
 })();
 
-// Если в URL есть якорь #row-N, сразу раскрыть и проскроллить к нему
 (function() {
   var hash = window.location.hash;
   if (hash && hash.indexOf('#row-') === 0) {

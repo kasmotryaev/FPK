@@ -174,7 +174,7 @@
 
 <div class="card section-block">
   <div class="section-title">Деньги периода</div>
-  <div class="subtitle" style="margin-bottom:10px">Факт и план 0‑100 — по всем разделам. План 0‑100 и Возможности в фокусе — только Проекты, Заказные доработки, Лицензии, Сопровождение, TaaS.</div>
+  <div class="subtitle" style="margin-bottom:10px">По всем разделам и статьям активного периода.</div>
   <div class="grid-4">
     <div class="card kpi-tile" style="background:var(--fact-bg); border-color:var(--ok)">
       <div class="kpi-label" style="color:var(--ok)">Факт (получено)</div>
@@ -212,16 +212,16 @@
       <div class="kpi-sub">получено + осталось по плану, по всем разделам</div>
     </div>
     <div class="card kpi-tile" style="background:var(--accent-bg); border-color:var(--accent)">
-      <div class="kpi-label" style="color:var(--accent)">План 0‑100 (фокус)</div>
+      <div class="kpi-label" style="color:var(--accent)">0‑100</div>
       <div class="kpi-value" style="color:var(--accent)">
-        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=focus_sections, portfolio=['0-100']) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(focus_summary.get('0-100',0)).replace(',', ' ') }} ₽</a>
+        <a href="{{ url_for('rows_list', portfolio=['0-100']) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(summary.get('0-100',0)).replace(',', ' ') }} ₽</a>
       </div>
-      <div class="kpi-sub">осталось получить по плану</div>
+      <div class="kpi-sub">осталось получить по плану, по всем разделам</div>
     </div>
     <div class="card kpi-tile" style="background:var(--neutral-bg); border-color:var(--ink-300)">
-      <div class="kpi-label" style="color:var(--ink-500)">Возможности (фокус)</div>
+      <div class="kpi-label" style="color:var(--ink-500)">Возможности</div>
       <div class="kpi-value" style="color:var(--ink-700)">
-        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=focus_sections, portfolio=['Возможности']) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(focus_summary.get('Возможности',0)).replace(',', ' ') }} ₽</a>
+        <a href="{{ url_for('rows_list', portfolio=['Возможности']) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(summary.get('Возможности',0)).replace(',', ' ') }} ₽</a>
       </div>
       <div class="kpi-sub">незапланированные деньги при выполнении обязательств</div>
     </div>

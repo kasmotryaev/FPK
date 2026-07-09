@@ -31,7 +31,7 @@
           {% endif %}
 
           <div class="nav-group-label">Трудозатраты</div>
-          <a href="{{ url_for('timesheets') }}" class="{{ 'active' if request.endpoint in ('timesheets','ts_import','ts_import_employees','ts_add_employee','ts_delete_employee','ts_clear_employees') }}"><span class="nav-icon">⏱</span>Периоды</a>
+          <a href="{{ url_for('timesheets') }}" class="{{ 'active' if request.endpoint in ('timesheets','ts_import','ts_import_employees','ts_add_employee','ts_delete_employee','ts_clear_employees') }}"><span class="nav-icon">⏱</span>ТЗ по периодам</a>
           <a href="{{ url_for('ts_compare') }}" class="{{ 'active' if request.endpoint == 'ts_compare' }}"><span class="nav-icon">⚖️</span>Расходы vs Доходы</a>
           <a href="{{ url_for('ts_analytics') }}" class="{{ 'active' if request.endpoint == 'ts_analytics' }}"><span class="nav-icon">📈</span>Аналитика</a>
           <a href="{{ url_for('ts_diff') }}" class="{{ 'active' if request.endpoint == 'ts_diff' }}"><span class="nav-icon">🔀</span>Сравнение периодов</a>

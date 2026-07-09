@@ -63,6 +63,9 @@ def get_conn():
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")   # лучше при параллельных чтениях
+            conn.execute("PRAGMA cache_size = -8000")   # 8 МБ кэш страниц
+            conn.execute("PRAGMA synchronous = NORMAL") # безопасно + быстрее FULL
             # SQLite's built-in LOWER()/LIKE case-folding is ASCII-only and doesn't handle Cyrillic.
             # Override LOWER with Python's Unicode-aware str.lower() so LOWER(x) LIKE LOWER(?) works
             # correctly for Cyrillic text (client names, project names, etc).
@@ -395,7 +398,9 @@ def init_db():
     # разделу/портфелю/менеджеру) и подгрузку обязательств по строкам (WHERE fp_row_id IN (...)).
     # Сейчас, при текущем объёме данных, это не критично, но не даёт деградировать по скорости
     # с ростом базы -- и ничего не меняет в содержимом/поведении страниц.
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_fp_rows_active_month ON fp_rows(is_active, month)")
+    # Составной индекс покрывает основной WHERE на всех страницах:
+    # is_active=1 AND quarter_label IN (...) AND month IN (...)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_fp_rows_active_ql_month ON fp_rows(is_active, quarter_label, month)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_fp_rows_client ON fp_rows(client_name)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_fp_rows_section ON fp_rows(section)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_fp_rows_portfolio ON fp_rows(portfolio)")
@@ -490,7 +495,8 @@ def init_db():
         imported_at TEXT DEFAULT CURRENT_TIMESTAMP,
         rows_total INTEGER DEFAULT 0,
         rp_filter TEXT,
-        pc_filter TEXT
+        pc_filter TEXT,
+        file_type TEXT DEFAULT 'office'
     )
     """)
 
@@ -499,6 +505,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         import_id INTEGER NOT NULL REFERENCES ts_imports(id) ON DELETE CASCADE,
         rp TEXT,
+        rp_product TEXT,
         dept TEXT,
         division TEXT,
         employee TEXT,
@@ -547,6 +554,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             import_id INTEGER NOT NULL REFERENCES ts_imports(id) ON DELETE CASCADE,
             rp TEXT,
+            rp_product TEXT,
             dept TEXT,
             division TEXT,
             employee TEXT,
@@ -567,6 +575,16 @@ def init_db():
     ts_imp_cols = [c["name"] for c in cur.execute("PRAGMA table_info(ts_imports)").fetchall()]
     if "pc_filter" not in ts_imp_cols:
         cur.execute("ALTER TABLE ts_imports ADD COLUMN pc_filter TEXT")
+        conn.commit()
+    # Миграция: добавляем file_type в ts_imports если его нет
+    ts_imp_cols = [c["name"] for c in cur.execute("PRAGMA table_info(ts_imports)").fetchall()]
+    if "file_type" not in ts_imp_cols:
+        cur.execute("ALTER TABLE ts_imports ADD COLUMN file_type TEXT DEFAULT 'office'")
+        conn.commit()
+    # Миграция: добавляем rp_product в ts_rows если его нет
+    ts_row_cols = [c["name"] for c in cur.execute("PRAGMA table_info(ts_rows)").fetchall()]
+    if "rp_product" not in ts_row_cols:
+        cur.execute("ALTER TABLE ts_rows ADD COLUMN rp_product TEXT")
         conn.commit()
     # ──────────────────────────────────────────────────────────────────────────
 
