@@ -167,9 +167,13 @@
       </a>
       {% endfor %}
     </div>
+    {% if current_import %}
+    <a href="{{ url_for('ts_export', import_id=current_import.id) }}"
+       class="btn btn-sm" style="flex-shrink:0" title="Скачать в Excel">⬇ xlsx</a>
+    {% endif %}
     {% if current_import and current_user_role == 'owner' %}
     <form method="POST" action="{{ url_for('ts_delete_import', import_id=current_import.id) }}"
-          onsubmit="return confirm('Удалить этот импорт?')" style="margin-left:auto;flex-shrink:0">
+          onsubmit="return confirm('Удалить этот импорт?')" style="margin-left:4px;flex-shrink:0">
       <button class="btn btn-sm btn-danger" type="submit">Удалить</button>
     </form>
     {% endif %}

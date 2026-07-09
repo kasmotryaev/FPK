@@ -47,9 +47,23 @@ echo "📝  Изменённые файлы:"
 echo "$CHANGED" | sed 's/^/    /'
 echo ""
 
-# ── Коммит и пуш ──────────────────────────────────────────────
+# ── Описание изменений ────────────────────────────────────────
 COUNT=$(echo "$CHANGED" | wc -l | tr -d ' ')
-git commit -m "Обновление $(date '+%d.%m.%Y %H:%M') · $COUNT файл(ов)"
+DEFAULT_MSG="Обновление $(date '+%d.%m.%Y %H:%M') · $COUNT файл(ов)"
+
+echo "Описание изменений (Enter — оставить автоматическое):"
+echo "  $DEFAULT_MSG"
+echo ""
+read -r USER_DESC
+
+if [ -z "$USER_DESC" ]; then
+  COMMIT_MSG="$DEFAULT_MSG"
+else
+  COMMIT_MSG="$(date '+%d.%m.%Y') · $USER_DESC"
+fi
+
+# ── Коммит и пуш ──────────────────────────────────────────────
+git commit -m "$COMMIT_MSG"
 
 echo "⏳  Отправляем на GitHub..."
 git push

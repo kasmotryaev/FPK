@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Сравнение периодов — ФП-Контроль{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1 class="page-title">Сравнение периодов</h1>
+  <p class="page-subtitle">Разница часов между двумя периодами — по сотрудникам и проектам</p>
+</div>
+
+{# ── Выбор периодов ──────────────────────────────────────── #}
+<form method="GET" action="{{ url_for('ts_diff') }}" class="diff-form">
+  <div class="diff-selects">
+    <div class="diff-sel-wrap">
+      <label class="diff-sel-label">Период A (база)</label>
+      <select name="a" class="diff-select" required>
+        <option value="">— выберите —</option>
+        {% for imp in imports %}
+        <option value="{{ imp.id }}" {{ 'selected' if imp.id == id_a }}>
+          {{ imp.period_label or imp.filename }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="diff-arrow">→</div>
+    <div class="diff-sel-wrap">
+      <label class="diff-sel-label">Период B (сравниваем)</label>
+      <select name="b" class="diff-select" required>
+        <option value="">— выберите —</option>
+        {% for imp in imports %}
+        <option value="{{ imp.id }}" {{ 'selected' if imp.id == id_b }}>
+          {{ imp.period_label or imp.filename }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Сравнить</button>
+  </div>
+</form>
+
+{% if not imports %}
+<div class="empty-state" style="margin-top:64px">
+  <div class="big">⚖️</div>
+  Загрузите хотя бы два периода на странице <a href="{{ url_for('timesheets') }}">Трудозатраты</a>
+</div>
+
+{% elif import_a and import_b %}
+
+{# ── Сводка ─────────────────────────────────────────────── #}
+{% set total_a = emp_diff | sum(attribute='hours_a') %}
+{% set total_b = emp_diff | sum(attribute='hours_b') %}
+{% set total_delta = total_b - total_a %}
+<div class="ts-summary-bar" style="margin-bottom:24px">
+  <div class="ts-sum-item">
+    <span class="ts-sum-label">{{ import_a.period_label or import_a.filename }}</span>
+    <span class="ts-sum-val">{{ "%.1f"|format(total_a) }} ч</span>
+  </div>
+  <div class="ts-sum-item">
+    <span class="ts-sum-label">{{ import_b.period_label or import_b.filename }}</span>
+    <span class="ts-sum-val">{{ "%.1f"|format(total_b) }} ч</span>
+  </div>
+  <div class="ts-sum-item">
+    <span class="ts-sum-label">Изменение</span>
+    <span class="ts-sum-val {{ 'diff-pos' if total_delta >= 0 else 'diff-neg' }}">
+      {{ ('+' if total_delta >= 0 else '') + "%.1f"|format(total_delta) }} ч
+    </span>
+  </div>
+  <div class="ts-sum-item">
+    <span class="ts-sum-label">Сотрудников</span>
+    <span class="ts-sum-val">{{ emp_diff|length }}</span>
+  </div>
+</div>
+
+{# ── Вкладки ────────────────────────────────────────────── #}
+<div class="diff-tabs">
+  <button class="diff-tab-btn diff-tab-active" onclick="diffTab(this,'emp')">
+    👥 По сотрудникам <span class="ts-tab-cnt">{{ emp_diff|length }}</span>
+  </button>
+  <button class="diff-tab-btn" onclick="diffTab(this,'proj')">
+    📋 По проектам <span class="ts-tab-cnt">{{ proj_diff|length }}</span>
+  </button>
+</div>
+
+{# ── Таблица: сотрудники ────────────────────────────────── #}
+<div id="diff-pane-emp" class="diff-table-wrap">
+  <table class="diff-table">
+    <thead>
+      <tr>
+        <th>Сотрудник</th>
+        <th class="diff-th-num">{{ import_a.period_label or 'A' }}</th>
+        <th class="diff-th-num">{{ import_b.period_label or 'B' }}</th>
+        <th class="diff-th-num">Δ часов</th>
+        <th class="diff-th-num">Тренд</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in emp_diff %}
+      <tr class="{{ 'diff-row-mine' if e.is_mine }}">
+        <td>
+          {{ e.name }}
+          {% if e.is_mine %}<span class="ts-mine-badge">✓</span>{% endif %}
+          {% if e.hours_a == 0 %}<span class="diff-badge diff-badge-new">новый</span>{% endif %}
+          {% if e.hours_b == 0 %}<span class="diff-badge diff-badge-gone">ушёл</span>{% endif %}
+        </td>
+        <td class="diff-td-num diff-col-a">{{ "%.1f"|format(e.hours_a) if e.hours_a else '—' }}</td>
+        <td class="diff-td-num diff-col-b">{{ "%.1f"|format(e.hours_b) if e.hours_b else '—' }}</td>
+        <td class="diff-td-num {{ 'diff-pos' if e.delta > 0 else 'diff-neg' if e.delta < 0 else '' }}">
+          {{ ('+' if e.delta > 0 else '') + "%.1f"|format(e.delta) }}
+        </td>
+        <td class="diff-td-trend">
+          {% if e.hours_a == 0 %}
+            <span class="diff-trend diff-trend-new">▶</span>
+          {% elif e.hours_b == 0 %}
+            <span class="diff-trend diff-trend-gone">✕</span>
+          {% elif e.delta > 0 %}
+            <span class="diff-trend diff-trend-up">▲</span>
+          {% elif e.delta < 0 %}
+            <span class="diff-trend diff-trend-dn">▼</span>
+          {% else %}
+            <span class="diff-trend diff-trend-eq">═</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{# ── Таблица: проекты ───────────────────────────────────── #}
+<div id="diff-pane-proj" class="diff-table-wrap" style="display:none">
+  <table class="diff-table">
+    <thead>
+      <tr>
+        <th>Проект</th>
+        <th class="diff-th-num">{{ import_a.period_label or 'A' }}</th>
+        <th class="diff-th-num">{{ import_b.period_label or 'B' }}</th>
+        <th class="diff-th-num">Δ часов</th>
+        <th class="diff-th-num">Тренд</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in proj_diff %}
+      <tr>
+        <td>
+          {{ p.name }}
+          {% if p.hours_a == 0 %}<span class="diff-badge diff-badge-new">новый</span>{% endif %}
+          {% if p.hours_b == 0 %}<span class="diff-badge diff-badge-gone">закрыт</span>{% endif %}
+        </td>
+        <td class="diff-td-num diff-col-a">{{ "%.1f"|format(p.hours_a) if p.hours_a else '—' }}</td>
+        <td class="diff-td-num diff-col-b">{{ "%.1f"|format(p.hours_b) if p.hours_b else '—' }}</td>
+        <td class="diff-td-num {{ 'diff-pos' if p.delta > 0 else 'diff-neg' if p.delta < 0 else '' }}">
+          {{ ('+' if p.delta > 0 else '') + "%.1f"|format(p.delta) }}
+        </td>
+        <td class="diff-td-trend">
+          {% if p.hours_a == 0 %}
+            <span class="diff-trend diff-trend-new">▶</span>
+          {% elif p.hours_b == 0 %}
+            <span class="diff-trend diff-trend-gone">✕</span>
+          {% elif p.delta > 0 %}
+            <span class="diff-trend diff-trend-up">▲</span>
+          {% elif p.delta < 0 %}
+            <span class="diff-trend diff-trend-dn">▼</span>
+          {% else %}
+            <span class="diff-trend diff-trend-eq">═</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+function diffTab(btn, tab) {
+  document.querySelectorAll('.diff-tab-btn').forEach(b => b.classList.remove('diff-tab-active'));
+  btn.classList.add('diff-tab-active');
+  document.getElementById('diff-pane-emp').style.display  = (tab === 'emp')  ? '' : 'none';
+  document.getElementById('diff-pane-proj').style.display = (tab === 'proj') ? '' : 'none';
+}
+</script>
+
+{% endif %}
+
+{% endblock %}

@@ -3415,6 +3415,218 @@ def ts_set_rate():
                             import_id=request.form.get("import_id", type=int)))
 
 
+# ─── Трудозатраты: аналитика по времени ──────────────────────────────────────
+
+@app.route("/timesheets/analytics")
+@login_required
+def ts_analytics():
+    conn = get_conn()
+    imports = conn.execute(
+        "SELECT * FROM ts_imports ORDER BY imported_at ASC LIMIT 50"
+    ).fetchall()
+    employees = conn.execute("SELECT full_name FROM my_employees").fetchall()
+    emp_names = {e["full_name"].upper() for e in employees}
+
+    periods = []
+    for imp in imports:
+        rows = conn.execute(
+            "SELECT employee, SUM(hours) h FROM ts_rows WHERE import_id = ? GROUP BY employee",
+            (imp["id"],),
+        ).fetchall()
+        total_h = sum(r["h"] or 0 for r in rows)
+        my_h = sum(r["h"] or 0 for r in rows if (r["employee"] or "").upper() in emp_names)
+        periods.append({
+            "id": imp["id"],
+            "label": imp["period_label"] or imp["filename"],
+            "total_hours": total_h,
+            "my_hours": my_h,
+            "others_hours": total_h - my_h,
+            "rows_total": imp["rows_total"] or 0,
+        })
+    conn.close()
+    max_h = max((p["total_hours"] for p in periods), default=1) or 1
+    return render_template("ts_analytics.html", periods=periods, emp_names=emp_names, max_h=max_h)
+
+
+# ─── Трудозатраты: сравнение двух периодов ───────────────────────────────────
+
+@app.route("/timesheets/diff")
+@login_required
+def ts_diff():
+    conn = get_conn()
+    imports = conn.execute(
+        "SELECT * FROM ts_imports ORDER BY imported_at DESC LIMIT 50"
+    ).fetchall()
+    id_a = request.args.get("a", type=int)
+    id_b = request.args.get("b", type=int)
+
+    employees = conn.execute("SELECT full_name FROM my_employees").fetchall()
+    emp_names = {e["full_name"].upper() for e in employees}
+
+    import_a = import_b = None
+    emp_diff = []
+    proj_diff = []
+
+    if id_a and id_b and id_a != id_b:
+        import_a = conn.execute("SELECT * FROM ts_imports WHERE id = ?", (id_a,)).fetchone()
+        import_b = conn.execute("SELECT * FROM ts_imports WHERE id = ?", (id_b,)).fetchone()
+
+        def _agg(import_id, field):
+            return {
+                (r[field] or "—"): (r["h"] or 0)
+                for r in conn.execute(
+                    f"SELECT {field}, SUM(hours) h FROM ts_rows WHERE import_id = ? GROUP BY {field}",
+                    (import_id,),
+                ).fetchall()
+            }
+
+        emp_a = _agg(id_a, "employee")
+        emp_b = _agg(id_b, "employee")
+        for name in sorted(set(emp_a) | set(emp_b)):
+            ha, hb = emp_a.get(name, 0), emp_b.get(name, 0)
+            emp_diff.append({
+                "name": name, "hours_a": ha, "hours_b": hb,
+                "delta": hb - ha, "is_mine": name.upper() in emp_names,
+            })
+        emp_diff.sort(key=lambda x: -abs(x["delta"]))
+
+        proj_a = _agg(id_a, "project")
+        proj_b = _agg(id_b, "project")
+        for name in sorted(set(proj_a) | set(proj_b)):
+            ha, hb = proj_a.get(name, 0), proj_b.get(name, 0)
+            proj_diff.append({"name": name, "hours_a": ha, "hours_b": hb, "delta": hb - ha})
+        proj_diff.sort(key=lambda x: -abs(x["delta"]))
+
+    conn.close()
+    return render_template(
+        "ts_diff.html",
+        imports=imports, id_a=id_a, id_b=id_b,
+        import_a=import_a, import_b=import_b,
+        emp_diff=emp_diff, proj_diff=proj_diff,
+        emp_names=emp_names,
+    )
+
+
+# ─── Трудозатраты: поиск по сотруднику ───────────────────────────────────────
+
+@app.route("/timesheets/employee")
+@login_required
+def ts_employee():
+    conn = get_conn()
+    q = (request.args.get("q") or "").strip()
+
+    all_emps = [
+        r["employee"] for r in conn.execute(
+            "SELECT DISTINCT employee FROM ts_rows "
+            "WHERE employee IS NOT NULL AND employee != '' ORDER BY employee"
+        ).fetchall()
+    ]
+    my_employees = conn.execute("SELECT full_name FROM my_employees ORDER BY full_name").fetchall()
+    emp_names = {e["full_name"].upper() for e in my_employees}
+
+    matched_name = ""
+    timeline = []
+
+    if q:
+        q_up = q.upper()
+        matched_name = next((e for e in all_emps if e.upper() == q_up), None)
+        if not matched_name:
+            matched_name = next((e for e in all_emps if q_up in e.upper()), None)
+        if matched_name:
+            imports = conn.execute(
+                "SELECT i.* FROM ts_imports i "
+                "WHERE EXISTS (SELECT 1 FROM ts_rows r WHERE r.import_id = i.id AND r.employee = ?) "
+                "ORDER BY i.imported_at ASC",
+                (matched_name,),
+            ).fetchall()
+            for imp in imports:
+                rows = conn.execute(
+                    "SELECT * FROM ts_rows WHERE import_id = ? AND employee = ? ORDER BY project, task",
+                    (imp["id"], matched_name),
+                ).fetchall()
+                timeline.append({
+                    "import": imp,
+                    "rows": rows,
+                    "total_hours": sum(r["hours"] or 0 for r in rows),
+                })
+
+    conn.close()
+    return render_template(
+        "ts_employee.html",
+        q=q, all_emps=all_emps, matched_name=matched_name,
+        timeline=timeline, emp_names=emp_names,
+    )
+
+
+# ─── Трудозатраты: выгрузка в Excel ──────────────────────────────────────────
+
+@app.route("/timesheets/export")
+@login_required
+def ts_export():
+    import_id = request.args.get("import_id", type=int)
+    if not import_id:
+        flash("Выберите период для выгрузки", "error")
+        return redirect(url_for("timesheets"))
+
+    conn = get_conn()
+    imp = conn.execute("SELECT * FROM ts_imports WHERE id = ?", (import_id,)).fetchone()
+    if not imp:
+        conn.close()
+        flash("Импорт не найден", "error")
+        return redirect(url_for("timesheets"))
+
+    rows = conn.execute(
+        "SELECT * FROM ts_rows WHERE import_id = ? ORDER BY dept, division, employee, project",
+        (import_id,),
+    ).fetchall()
+    conn.close()
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from io import BytesIO
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Трудозатраты"
+
+    period = imp["period_label"] or imp["filename"]
+    headers = ["Период", "РП", "Департамент", "Подразделение", "Сотрудник",
+               "Проект", "Задача", "Клиент", "Тип проекта", "Вид работ", "Часы"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(fill_type="solid", fgColor="2563A8")
+
+    for i, r in enumerate(rows, 2):
+        ws.cell(row=i, column=1, value=period)
+        ws.cell(row=i, column=2, value=r["rp"])
+        ws.cell(row=i, column=3, value=r["dept"])
+        ws.cell(row=i, column=4, value=r["division"])
+        ws.cell(row=i, column=5, value=r["employee"])
+        ws.cell(row=i, column=6, value=r["project"])
+        ws.cell(row=i, column=7, value=r["task"])
+        ws.cell(row=i, column=8, value=r["client"])
+        ws.cell(row=i, column=9, value=r["project_type"])
+        ws.cell(row=i, column=10, value=r["work_type"])
+        ws.cell(row=i, column=11, value=r["hours"])
+
+    for col in ws.columns:
+        max_len = max((len(str(cell.value or "")) for cell in col), default=0)
+        ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 55)
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    safe = re.sub(r"[^\w\-]", "_", period)
+    from flask import send_file
+    return send_file(
+        buf, as_attachment=True,
+        download_name=f"ts_{safe}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
 if __name__ == "__main__":
     init_db()
     app.run(host="127.0.0.1", port=5000, debug=True)

@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Аналитика трудозатрат — ФП-Контроль{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1 class="page-title">Аналитика трудозатрат</h1>
+  <p class="page-subtitle">Динамика часов по загруженным периодам</p>
+</div>
+
+{% if not periods %}
+<div class="empty-state" style="margin-top:64px">
+  <div class="big">📈</div>
+  Загрузите хотя бы один отчёт трудозатрат на странице <a href="{{ url_for('timesheets') }}">Трудозатраты</a>
+</div>
+{% else %}
+
+{# ── Сводная строка ─────────────────────────────────────── #}
+{% set total_all = periods | sum(attribute='total_hours') %}
+{% set total_my  = periods | sum(attribute='my_hours') %}
+<div class="ts-summary-bar" style="margin-bottom:24px">
+  <div class="ts-sum-item ts-sum-total">
+    <span class="ts-sum-label">Периодов</span>
+    <span class="ts-sum-val">{{ periods|length }}</span>
+  </div>
+  <div class="ts-sum-item">
+    <span class="ts-sum-label">Всего часов</span>
+    <span class="ts-sum-val">{{ "%.0f"|format(total_all) }}</span>
+  </div>
+  {% if emp_names %}
+  <div class="ts-sum-item">
+    <span class="ts-sum-label">Моих сотрудников</span>
+    <span class="ts-sum-val">{{ emp_names|length }}</span>
+  </div>
+  <div class="ts-sum-item">
+    <span class="ts-sum-label">Мои часы (сумм.)</span>
+    <span class="ts-sum-val">{{ "%.0f"|format(total_my) }}</span>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Бар-чарт ───────────────────────────────────────────── #}
+<div class="an-chart-wrap">
+  <div class="an-chart">
+    {% for p in periods %}
+    {% set pct_total = (p.total_hours / max_h * 100) | round(1) %}
+    {% set pct_my    = (p.my_hours    / max_h * 100) | round(1) if p.total_hours else 0 %}
+    <div class="an-bar-col">
+      <div class="an-bar-labels">
+        <span class="an-bar-val">{{ "%.0f"|format(p.total_hours) }}</span>
+      </div>
+      <div class="an-bar-track">
+        <div class="an-bar-total" style="height:{{ pct_total }}%">
+          {% if emp_names and p.my_hours > 0 %}
+          <div class="an-bar-mine" style="height:{{ (p.my_hours / p.total_hours * 100)|round(1) if p.total_hours else 0 }}%"></div>
+          {% endif %}
+        </div>
+      </div>
+      <a class="an-bar-label" href="{{ url_for('timesheets', import_id=p.id) }}" title="{{ p.label }}">
+        {{ p.label[:20] }}{% if p.label|length > 20 %}…{% endif %}
+      </a>
+    </div>
+    {% endfor %}
+  </div>
+  {% if emp_names %}
+  <div class="an-legend">
+    <span class="an-leg-mine"></span> Мои сотрудники &ensp;
+    <span class="an-leg-others"></span> Остальные
+  </div>
+  {% endif %}
+</div>
+
+{# ── Таблица ────────────────────────────────────────────── #}
+<div class="an-table-wrap">
+  <table class="an-table">
+    <thead>
+      <tr>
+        <th>Период</th>
+        <th class="an-th-num">Строк</th>
+        <th class="an-th-num">Часов всего</th>
+        {% if emp_names %}
+        <th class="an-th-num">Мои, ч</th>
+        <th class="an-th-num">Другие, ч</th>
+        <th class="an-th-num">% мои</th>
+        {% endif %}
+        <th class="an-th-num">Действия</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in periods | reverse %}
+      {% set pct_mine = (p.my_hours / p.total_hours * 100) | round(0) | int if p.total_hours else 0 %}
+      <tr>
+        <td>
+          <a href="{{ url_for('timesheets', import_id=p.id) }}">{{ p.label }}</a>
+        </td>
+        <td class="an-td-num">{{ p.rows_total }}</td>
+        <td class="an-td-num">{{ "%.1f"|format(p.total_hours) }}</td>
+        {% if emp_names %}
+        <td class="an-td-num an-mine">{{ "%.1f"|format(p.my_hours) }}</td>
+        <td class="an-td-num an-others">{{ "%.1f"|format(p.others_hours) }}</td>
+        <td class="an-td-num">
+          <span class="an-pct-bar">
+            <span class="an-pct-fill" style="width:{{ pct_mine }}%"></span>
+          </span>
+          {{ pct_mine }}%
+        </td>
+        {% endif %}
+        <td class="an-td-num">
+          <a href="{{ url_for('ts_export', import_id=p.id) }}" class="btn btn-sm" title="Скачать Excel">⬇ xlsx</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endif %}
+{% endblock %}

@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Поиск по сотруднику — ФП-Контроль{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1 class="page-title">Поиск по сотруднику</h1>
+  <p class="page-subtitle">История часов по всем загруженным периодам</p>
+</div>
+
+{# ── Строка поиска ───────────────────────────────────────── #}
+<form method="GET" action="{{ url_for('ts_employee') }}" class="emp-search-form">
+  <input type="text" name="q" value="{{ q }}" placeholder="ФИО сотрудника…"
+         list="emp-list" class="emp-search-input" autocomplete="off">
+  <datalist id="emp-list">
+    {% for e in all_emps %}
+    <option value="{{ e }}">
+    {% endfor %}
+  </datalist>
+  <button type="submit" class="btn btn-primary">Найти</button>
+  {% if q and matched_name %}
+  <a href="{{ url_for('ts_employee') }}" class="btn btn-sm" style="margin-left:4px">✕ Сбросить</a>
+  {% endif %}
+</form>
+
+{% if q and not matched_name %}
+<div class="empty-state" style="margin-top:48px">
+  <div class="big">🔍</div>
+  Сотрудник «{{ q }}» не найден в базе трудозатрат
+</div>
+
+{% elif matched_name %}
+
+{# ── Заголовок сотрудника ────────────────────────────────── #}
+<div class="emp-header-card">
+  <div class="emp-hdr-name">
+    {{ matched_name }}
+    {% if matched_name.upper() in emp_names %}
+    <span class="ts-mine-badge" style="font-size:14px;vertical-align:middle">✓ мой</span>
+    {% endif %}
+  </div>
+  <div class="emp-hdr-stats">
+    <span class="emp-stat-item">
+      <span class="emp-stat-label">Периодов</span>
+      <span class="emp-stat-val">{{ timeline|length }}</span>
+    </span>
+    <span class="emp-stat-item">
+      <span class="emp-stat-label">Итого часов</span>
+      <span class="emp-stat-val">{{ "%.1f"|format(timeline | sum(attribute='total_hours')) }}</span>
+    </span>
+  </div>
+</div>
+
+{# ── Мини-чарт по периодам ───────────────────────────────── #}
+{% if timeline|length > 1 %}
+{% set max_h = (timeline | map(attribute='total_hours') | max) or 1 %}
+<div class="emp-mini-chart">
+  {% for t in timeline %}
+  {% set pct = (t.total_hours / max_h * 100)|round(1) %}
+  <div class="emp-mini-col">
+    <div class="emp-mini-val">{{ "%.0f"|format(t.total_hours) }}</div>
+    <div class="emp-mini-track">
+      <div class="emp-mini-bar" style="height:{{ pct }}%"></div>
+    </div>
+    <a class="emp-mini-label" href="{{ url_for('timesheets', import_id=t.import.id) }}"
+       title="{{ t.import.period_label }}">
+      {{ (t.import.period_label or '')[:12] }}
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ── Timeline ────────────────────────────────────────────── #}
+<div class="emp-timeline">
+  {% for t in timeline | reverse %}
+  <details class="emp-period-block" {% if loop.first %}open{% endif %}>
+    <summary class="emp-period-head">
+      <span class="emp-period-label">
+        <a href="{{ url_for('timesheets', import_id=t.import.id) }}">
+          {{ t.import.period_label or t.import.filename }}
+        </a>
+      </span>
+      <span class="emp-period-hours">{{ "%.1f"|format(t.total_hours) }} ч</span>
+      <span class="emp-period-rows">{{ t.rows|length }} задач</span>
+    </summary>
+
+    <table class="emp-task-table">
+      <thead>
+        <tr>
+          <th>Проект</th>
+          <th>Задача</th>
+          <th class="emp-th-num">Часов</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set ns = namespace(cur_proj='') %}
+        {% for r in t.rows %}
+        <tr {% if r.project != ns.cur_proj %}class="emp-proj-first"{% endif %}>
+          {% if r.project != ns.cur_proj %}
+          {% set ns.cur_proj = r.project %}
+          <td class="emp-td-proj" rowspan="1">{{ r.project or '—' }}</td>
+          {% else %}
+          <td class="emp-td-proj-cont"></td>
+          {% endif %}
+          <td class="emp-td-task">{{ r.task or '—' }}</td>
+          <td class="emp-td-num">{{ "%.1f"|format(r.hours) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endfor %}
+</div>
+
+{% elif not q %}
+{# Стартовый экран — показываем список всех сотрудников #}
+<div class="emp-all-list">
+  <div class="emp-all-title">Все сотрудники в базе ({{ all_emps|length }})</div>
+  <div class="emp-chips">
+    {% for e in all_emps %}
+    <a href="{{ url_for('ts_employee', q=e) }}"
+       class="emp-chip {{ 'emp-chip-mine' if e.upper() in emp_names }}">{{ e }}</a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
