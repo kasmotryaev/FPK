@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Настройки — ФП‑Контроль{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Настройки</h1>
+    <div class="subtitle">Управление кварталом и загрузка данных из Excel</div>
+  </div>
+  <button class="btn btn-sm" type="button" onclick="history.back()">← Назад</button>
+</div>
+
+<div class="card section-block" style="max-width:540px">
+  <div class="section-title">Загрузка подложки из Excel</div>
+  <form method="POST" enctype="multipart/form-data" style="margin-top:10px">
+    <div class="form-group">
+      <label>За какой квартал</label>
+      <select name="upload_quarter" style="min-width:150px">
+        {% for q in quarter_option_list %}
+          <option value="{{ q }}"
+            {{ 'selected' if q == current_quarter_label }}>
+            {{ q }}{% if q == current_quarter_label %} (текущий){% elif q == next_quarter_label %} (следующий){% endif %}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Файл .xlsx</label>
+      <input type="file" name="file" accept=".xlsx" required>
+    </div>
+    <button class="btn btn-primary" type="submit">Загрузить и обновить данные</button>
+  </form>
+  <div class="obl-meta" style="margin-top:12px">
+    Выберите квартал, к которому относится файл. Строки других кварталов не затрагиваются.
+    При первой загрузке нового квартала обязательства и примечания из предыдущего переносятся автоматически.
+    Кнопка «Зафиксировать» доступна на дашборде.
+  </div>
+</div>
+
+{% if last_diff %}
+<div class="card section-block">
+  <div class="section-title">Что изменилось при последней загрузке</div>
+  <div class="grid-3" style="margin-bottom:14px">
+    <div><span class="tag tag-ok">{{ last_diff.new|length }}{% if last_diff.new_truncated %}+{% endif %}</span> новых строк</div>
+    <div><span class="tag tag-warn">{{ last_diff.changed|length }}{% if last_diff.changed_truncated %}+{% endif %}</span> изменено</div>
+    <div><span class="tag tag-neutral">{{ last_diff.deactivated|length }}{% if last_diff.deactivated_truncated %}+{% endif %}</span> деактивировано</div>
+  </div>
+
+  {% if last_diff.changed %}
+    <div style="font-size:12.5px; font-weight:700; margin-bottom:6px; color:var(--ink-500); text-transform:uppercase;">Изменённые строки (первые 10)</div>
+    <table>
+      <thead><tr><th>Клиент</th><th>Проект</th><th>Что изменилось</th></tr></thead>
+      <tbody>
+        {% for c in last_diff.changed[:10] %}
+        <tr>
+          <td>{{ c.client }}</td><td>{{ c.project }}</td>
+          <td>
+            {% for ch in c.changes %}
+              <div>{{ ch.field }}: <span class="muted">{{ ch.old if ch.old is not none else '—' }}</span> → <strong>{{ ch.new if ch.new is not none else '—' }}</strong></div>
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if last_diff.changed|length > 10 or last_diff.changed_truncated %}
+      <div class="obl-meta" style="margin-top:8px"><a href="{{ url_for('import_diff', log_id=history[0].id) }}">Смотреть все изменения →</a></div>
+    {% endif %}
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="section-title">История загрузок</div>
+  <table>
+    <thead><tr><th>Дата</th><th>Файл</th><th>Кем</th><th class="num">Всего</th><th class="num">Новых</th><th class="num">Изменено</th><th class="num">Деактивировано</th><th></th></tr></thead>
+    <tbody>
+      {% for h in history %}
+      <tr>
+        <td>{{ h.imported_at }}</td>
+        <td>{{ h.filename }}</td>
+        <td>{{ h.full_name }}</td>
+        <td class="num">{{ h.rows_total }}</td>
+        <td class="num">{{ h.rows_new }}</td>
+        <td class="num">{{ h.rows_updated }}</td>
+        <td class="num">{{ h.rows_deactivated }}</td>
+        <td>{% if h.diff_json %}<a href="{{ url_for('import_diff', log_id=h.id) }}">Детали →</a>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if not history %}<div class="empty-state"><div class="big">∅</div>Загрузок ещё не было</div>{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Архив кварталов — ФП‑Контроль{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Архив кварталов</h1>
+    <div class="subtitle">
+      Только просмотр. При переходе на новый квартал статьи прошлого квартала не удаляются —
+      они остаются здесь под своей исходной меткой.
+    </div>
+  </div>
+</div>
+
+<form class="filters card" method="GET" style="align-items:center;">
+  <select name="q" onchange="this.form.submit()">
+    {% for ql in quarters %}
+      <option value="{{ ql }}" {{ 'selected' if ql == selected }}>
+        {{ ql }}{{ ' (текущий)' if ql == current_label }}
+      </option>
+    {% else %}
+      <option value="">нет данных</option>
+    {% endfor %}
+  </select>
+  {% if selected %}
+    <span class="subtitle" style="margin:0;">
+      {{ rows|length }} стр. · {{ "{:,.0f}".format(total_amount).replace(',', ' ') }} ₽
+    </span>
+  {% endif %}
+</form>
+
+{% if selected == current_label %}
+  <div class="flash flash-warning">
+    Это текущий квартал — он ещё ведётся. Актуальная версия этих же данных (с возможностью
+    редактирования) — на страницах «Дашборд квартала» и «Детализация».
+  </div>
+{% endif %}
+
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Клиент</th>
+        <th>Договор</th>
+        <th>Номер проекта</th>
+        <th>Проект</th>
+        <th>Раздел</th>
+        <th>Менеджер</th>
+        <th>ДПА</th>
+        <th class="num">Сумма 0‑100</th>
+        <th>Портфель</th>
+        <th>Риск</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+        <tr class="row-toggle" id="arow-{{ r.id }}" onclick="toggleArchiveObl({{ r.id }})" style="cursor:pointer">
+          <td>{{ r.client_name }}</td>
+          <td>{{ r.contract_num }}</td>
+          <td>{{ r.project_num or '—' }}</td>
+          <td>{{ r.project_name }}</td>
+          <td><span class="tag tag-neutral">{{ r.section }}</span></td>
+          <td>{{ r.project_manager or '—' }}</td>
+          <td>{{ r.dpa_date or '—' }}</td>
+          <td class="num">{{ "{:,.0f}".format(r.amount_0_100 or 0).replace(',', ' ') }} ₽</td>
+          <td>
+            {% if r.portfolio == 'Факт' %}<span class="tag tag-ok">Факт</span>
+            {% elif r.portfolio == 'Возможности' %}<span class="tag tag-neutral">Возможности</span>
+            {% else %}<span class="tag tag-warn">0‑100</span>{% endif %}
+          </td>
+          <td>
+            {% if r.risk_level %}
+              <span class="tag risk-tag risk-{{ risk_levels[r.risk_level].css }}">{{ risk_levels[r.risk_level].label }}</span>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr class="obl-row" id="arch-obl-{{ r.id }}" style="display:none;" onclick="event.stopPropagation()">
+          <td colspan="10" style="background:var(--paper); padding:16px 20px;">
+            <div style="margin-bottom:10px; font-size:12.5px; color:var(--ink-500);">
+              СДЗ: {{ r.sdz_date or '—' }} · фДЗ: {{ r.fdz_date or '—' }} ·
+              Юрлицо: {{ r.accounting_entity }} · Колодец: {{ r.kolodec }}
+              {% if r.responsible_full_name %}· Ответственный: {{ r.responsible_full_name }}{% endif %}
+            </div>
+            {% if r.internal_comment %}
+              <div class="obl-meta" style="margin-bottom:14px"><strong>Комментарий:</strong> {{ r.internal_comment }}</div>
+            {% endif %}
+            {% for o in obl_by_row.get(r.id, []) %}
+              <div class="obl-item">
+                <div class="obl-item-head">
+                  <span class="obl-title">{{ o.title }}</span>
+                  {% if o.status == 'done' %}<span class="tag tag-ok">выполнено</span>
+                  {% elif o.status == 'blocked' %}<span class="tag tag-danger">блокировано</span>
+                  {% elif o.status == 'in_progress' %}<span class="tag tag-warn">в работе</span>
+                  {% else %}<span class="tag tag-neutral">срок {{ o.due_date or 'не задан' }}</span>{% endif %}
+                </div>
+                {% if o.description %}<div class="obl-meta">{{ o.description }}</div>{% endif %}
+                <div class="obl-meta">Ответственный за обязательство: <strong>{{ o.responsible_name }}</strong></div>
+              </div>
+            {% else %}
+              <div class="empty-state" style="padding:20px"><div class="big">∅</div>Обязательств нет</div>
+            {% endfor %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if not rows %}
+    <div class="empty-state"><div class="big">∅</div>Нет данных за выбранный квартал</div>
+  {% endif %}
+</div>
+
+<script>
+function toggleArchiveObl(rowId) {
+  var el = document.getElementById('arch-obl-' + rowId);
+  if (!el) return;
+  el.style.display = (el.style.display === 'none' || !el.style.display) ? 'table-row' : 'none';
+}
+</script>
+{% endblock %}

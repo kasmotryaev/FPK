@@ -1,0 +1,119 @@
+{# Раскрывающаяся панель обязательств по строке ФП (вызывается из render_row в rows_list.html).
+   Вынесена в отдельный файл, чтобы тот же самый макрос можно было отрендерить отдельно --
+   как HTML-фрагмент при AJAX-обновлении (см. render_obligation_fragment() в main.py) -- без
+   полной перезагрузки страницы «Детализация» и без дублирования разметки в двух местах. #}
+{% macro render_obligations(row) %}
+  {% set obls = obl_by_row.get(row.id, []) %}
+  <tr class="obl-row" id="obl-{{ row.id }}" style="display:none;" onclick="event.stopPropagation()">
+    <td colspan="9" style="background:var(--paper); padding:16px 20px;">
+      <div style="margin-bottom:10px; font-size:12.5px; color:var(--ink-500);">
+        ДПА: {{ row.dpa_date or '—' }} · СДЗ: {{ row.sdz_date or '—' }} · фДЗ: {{ row.fdz_date or '—' }} ·
+        Юрлицо: {{ row.accounting_entity }} · Колодец: {{ row.kolodec }}
+        {% if row.mp_comment %}<br>Комментарий МП: {{ row.mp_comment }}{% endif %}
+        {% if row.note %}<br>Примечание: {{ row.note }}{% endif %}
+      </div>
+
+      {% if current_user_role == 'owner' %}
+        <form method="POST" action="{{ url_for('set_row_comment', row_id=row.id) }}" class="js-ajax-form" data-row-id="{{ row.id }}" style="display:flex; gap:8px; align-items:flex-start; max-width:620px; margin-bottom:14px;">
+          <textarea name="comment" rows="2" placeholder="Комментарий (виден всем)" style="flex:1; border:1px solid var(--line); border-radius:var(--radius); padding:8px 10px; font-size:13px; font-family:inherit;">{{ row.internal_comment or '' }}</textarea>
+          <button class="btn btn-sm btn-primary" type="submit">Сохранить</button>
+        </form>
+      {% elif row.internal_comment %}
+        <div class="obl-meta" style="margin-bottom:14px"><strong>Комментарий:</strong> {{ row.internal_comment }}</div>
+      {% endif %}
+
+      {% if current_user_role == 'owner' %}
+        <form method="POST" action="{{ url_for('set_row_risk', row_id=row.id) }}" class="js-ajax-form" data-row-id="{{ row.id }}" style="margin-bottom:14px; display:flex; align-items:center; gap:8px;">
+          <label style="font-size:13px; margin:0">Сумма под риском:</label>
+          <select name="risk_level" class="status-select" onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+            <option value="0" {{ 'selected' if not row.risk_level }}>Нет</option>
+            {% for lvl, info in risk_levels.items() %}
+              <option value="{{ lvl }}" {{ 'selected' if row.risk_level == lvl }}>{{ info.label }} (вероятность получить деньги ~{{ info.probability }}%)</option>
+            {% endfor %}
+          </select>
+        </form>
+      {% elif row.risk_level %}
+        <div class="obl-meta" style="margin-bottom:14px">
+          <span class="tag risk-tag risk-{{ risk_levels[row.risk_level].css }}">{{ risk_levels[row.risk_level].label }} (~{{ risk_levels[row.risk_level].probability }}% получить деньги)</span>
+        </div>
+      {% endif %}
+
+      {% for o in obls %}
+        {% set is_overdue = o.due_date and o.due_date < today and o.status != 'done' %}
+        <div class="obl-item">
+          <div class="obl-item-head">
+            <span class="obl-title">{{ o.title }}</span>
+            {% if o.status == 'done' %}<span class="tag tag-ok">выполнено</span>
+            {% elif is_overdue %}<span class="tag tag-danger">просрочено</span>
+            {% else %}<span class="tag tag-neutral">срок {{ o.due_date or 'не задан' }}</span>{% endif %}
+          </div>
+          {% if o.description %}<div class="obl-meta">{{ o.description }}</div>{% endif %}
+          {% if current_user_role == 'owner' %}
+            <form method="POST" action="{{ url_for('reassign_obligation', obl_id=o.id) }}" class="obl-meta js-ajax-form" data-row-id="{{ row.id }}" style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+              <label style="margin:0">Ответственный за обязательство:</label>
+              <select name="responsible_name" class="status-select" onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+                {% for name in all_responsible %}
+                  <option value="{{ name }}" {{ 'selected' if o.responsible_name == name }}>{{ name }}</option>
+                {% endfor %}
+              </select>
+            </form>
+          {% else %}
+            <div class="obl-meta">Ответственный за обязательство: <strong>{{ o.responsible_name }}</strong></div>
+          {% endif %}
+          <div class="obl-actions">
+            <form method="POST" action="{{ url_for('update_obligation_status', obl_id=o.id) }}" class="js-ajax-form" data-row-id="{{ row.id }}">
+              <select name="status" class="status-select" onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+                <option value="not_started" {{ 'selected' if o.status=='not_started' }}>Не начато</option>
+                <option value="in_progress" {{ 'selected' if o.status=='in_progress' }}>В работе</option>
+                <option value="done" {{ 'selected' if o.status=='done' }}>Выполнено</option>
+                <option value="blocked" {{ 'selected' if o.status=='blocked' }}>Блокировано</option>
+              </select>
+            </form>
+            {% if current_user_role == 'owner' %}
+            <form method="POST" action="{{ url_for('delete_obligation', obl_id=o.id) }}" class="js-ajax-form" data-row-id="{{ row.id }}" data-confirm="Удалить обязательство?">
+              <button class="btn btn-sm btn-danger" type="submit">Удалить</button>
+            </form>
+            {% endif %}
+          </div>
+        </div>
+      {% else %}
+        <div class="empty-state" style="padding:20px"><div class="big">∅</div>Обязательств пока нет</div>
+      {% endfor %}
+
+      <details style="margin-top:10px">
+        <summary class="btn btn-sm btn-primary" style="display:inline-block; cursor:pointer;">+ Добавить обязательство</summary>
+        <form method="POST" action="{{ url_for('add_obligation', row_id=row.id) }}" class="js-ajax-form" data-row-id="{{ row.id }}" style="margin-top:12px; max-width:560px;">
+          <div class="form-group">
+            <label>Текст обязательства / этапа</label>
+            <input type="text" name="title" required placeholder="Например: подписать акт по этапу 2">
+          </div>
+          <div class="form-group">
+            <label>Комментарий (опционально)</label>
+            <textarea name="description" rows="2"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Ответственный за обязательство</label>
+            <select name="responsible_name" required>
+              <option value="">— выберите —</option>
+              {% if row.section in team_lead_sections %}
+                {% for tl in team_leads %}
+                  <option value="{{ tl }}">{{ tl }}</option>
+                {% endfor %}
+              {% else %}
+                {% for name in all_responsible %}
+                  <option value="{{ name }}">{{ name }}</option>
+                {% endfor %}
+              {% endif %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Срок (дедлайн)</label>
+            <input type="date" name="due_date" value="{{ row.dpa_date }}">
+          </div>
+          <button class="btn btn-primary" type="submit">Сохранить обязательство</button>
+        </form>
+      </details>
+    </td>
+  </tr>
+{% endmacro %}
+{% if row is defined and obl_by_row is defined %}{{ render_obligations(row) }}{% endif %}

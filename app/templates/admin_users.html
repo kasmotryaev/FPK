@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Пользователи — ФП‑Контроль{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Пользователи и роли</h1>
+    <div class="subtitle">Управление доступом к порталу</div>
+  </div>
+  <button class="btn btn-sm" type="button" onclick="history.back()">← Назад</button>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="section-title">Список пользователей</div>
+    <table>
+      <thead><tr><th>Имя</th><th>Логин</th><th>Роль</th><th>Telegram</th><th></th></tr></thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td>{{ u.full_name }}</td>
+          <td>{{ u.username }}</td>
+          <td>
+            {% if u.role == 'owner' %}<span class="tag tag-warn">Owner</span>
+            {% elif u.role == 'team_lead' %}<span class="tag tag-ok">{{ u.team_lead_name }}</span>
+            {% else %}<span class="tag tag-neutral">Viewer</span>{% endif %}
+          </td>
+          <td>
+            {% if u.telegram_chat_id %}
+              <span class="tag tag-ok">привязан</span>
+              <form method="POST" action="{{ url_for('unlink_telegram', user_id=u.id) }}" style="display:inline" onsubmit="return confirm('Отвязать Telegram?')">
+                <button class="btn btn-sm" type="submit">Отвязать</button>
+              </form>
+            {% elif u.telegram_link_code %}
+              <span class="tag tag-warn">код: {{ u.telegram_link_code }}</span>
+            {% else %}
+              <span class="tag tag-neutral">не привязан</span>
+            {% endif %}
+            <form method="POST" action="{{ url_for('generate_telegram_code', user_id=u.id) }}" style="display:inline">
+              <button class="btn btn-sm" type="submit">{{ 'Новый код' if u.telegram_link_code or u.telegram_chat_id else 'Получить код' }}</button>
+            </form>
+          </td>
+          <td style="white-space:nowrap;">
+            <details class="popover">
+              <summary class="btn btn-sm">Редактировать</summary>
+              <div class="popover-panel" style="width:260px;">
+                <form method="POST" action="{{ url_for('edit_user', user_id=u.id) }}">
+                  <div class="form-group">
+                    <label>Логин</label>
+                    <input type="text" name="username" value="{{ u.username }}" required>
+                  </div>
+                  <div class="form-group">
+                    <label>Имя</label>
+                    <input type="text" name="full_name" value="{{ u.full_name }}" required>
+                  </div>
+                  <div class="form-group">
+                    <label>Новый пароль</label>
+                    <input type="text" name="password" placeholder="оставьте пустым, чтобы не менять">
+                  </div>
+                  <div class="form-group">
+                    <label>Роль</label>
+                    <select name="role" onchange="this.closest('form').querySelector('.tl-name-edit').style.display = this.value === 'team_lead' ? 'block' : 'none'">
+                      <option value="team_lead" {{ 'selected' if u.role == 'team_lead' }}>Руководитель команды</option>
+                      <option value="viewer" {{ 'selected' if u.role == 'viewer' }}>Наблюдатель</option>
+                      <option value="owner" {{ 'selected' if u.role == 'owner' }}>Owner</option>
+                    </select>
+                  </div>
+                  <div class="form-group tl-name-edit" style="display:{{ 'block' if u.role == 'team_lead' else 'none' }}">
+                    <label>Привязка к руководителю команды</label>
+                    <select name="team_lead_name">
+                      <option value="">—</option>
+                      {% for tl in team_leads %}
+                        <option value="{{ tl }}" {{ 'selected' if u.team_lead_name == tl }}>{{ tl }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="popover-actions">
+                    <button class="btn btn-sm btn-primary" type="submit">Сохранить</button>
+                  </div>
+                </form>
+              </div>
+            </details>
+            {% if u.role != 'owner' %}
+            <form method="POST" action="{{ url_for('delete_user', user_id=u.id) }}" style="display:inline" onsubmit="return confirm('Удалить пользователя?')">
+              <button class="btn btn-sm btn-danger" type="submit">Удалить</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="section-title">Telegram-бот</div>
+    <div class="subtitle" style="margin-bottom:10px">
+      Чтобы подключить пользователя к боту: нажмите «Получить код» в таблице слева, передайте код пользователю,
+      пользователь пишет боту команду <code>/link КОД</code>. После этого бот привязывается к аккаунту и присылает
+      напоминания и уведомления этому пользователю.
+    </div>
+  </div>
+</div>
+
+<div class="grid-2" style="margin-top:20px">
+  <div class="card">
+    <div class="section-title">Добавить пользователя</div>
+    <form method="POST">
+      <div class="form-group">
+        <label>Логин</label>
+        <input type="text" name="username" required>
+      </div>
+      <div class="form-group">
+        <label>Имя</label>
+        <input type="text" name="full_name" required>
+      </div>
+      <div class="form-group">
+        <label>Пароль</label>
+        <input type="text" name="password" required>
+      </div>
+      <div class="form-group">
+        <label>Роль</label>
+        <select name="role" id="role-select" onchange="document.getElementById('tl-name-group').style.display = this.value === 'team_lead' ? 'block' : 'none'">
+          <option value="team_lead">Руководитель команды</option>
+          <option value="viewer">Наблюдатель</option>
+          <option value="owner">Owner</option>
+        </select>
+      </div>
+      <div class="form-group" id="tl-name-group">
+        <label>Привязка к руководителю команды</label>
+        <select name="team_lead_name">
+          {% for tl in team_leads %}
+            <option value="{{ tl }}">{{ tl }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button class="btn btn-primary" type="submit">Создать пользователя</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

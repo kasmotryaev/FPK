@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Мои обязательства — ФП‑Контроль{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{% if current_user_role == 'team_lead' %}Мои обязательства{% else %}Все обязательства{% endif %}</h1>
+    <div class="subtitle">{{ obligations|length }} обязательств</div>
+  </div>
+  <button class="btn btn-sm" type="button" onclick="history.back()">← Назад</button>
+</div>
+
+<div class="card">
+  {% for o in obligations %}
+    {% set is_overdue = o.due_date and o.due_date < today and o.status != 'done' %}
+    <div class="obl-item">
+      <div class="obl-item-head">
+        <span class="obl-title">{{ o.title }}</span>
+        {% if o.status == 'done' %}<span class="tag tag-ok">выполнено</span>
+        {% elif is_overdue %}<span class="tag tag-danger">просрочено: {{ o.due_date }}</span>
+        {% else %}<span class="tag tag-neutral">срок {{ o.due_date or 'не задан' }}</span>{% endif %}
+      </div>
+      <div class="obl-meta">{{ o.client_name }} · {{ o.project_name }} · {{ o.section }} · {{ "{:,.0f}".format(o.amount_0_100 or 0).replace(',', ' ') }} ₽</div>
+      {% if current_user_role != 'team_lead' %}<div class="obl-meta">Ответственный: {{ o.responsible_name }}</div>{% endif %}
+      <div class="obl-actions">
+        <form method="POST" action="{{ url_for('update_obligation_status', obl_id=o.id) }}">
+          <select name="status" class="status-select" onchange="this.form.submit()">
+            <option value="not_started" {{ 'selected' if o.status=='not_started' }}>Не начато</option>
+            <option value="in_progress" {{ 'selected' if o.status=='in_progress' }}>В работе</option>
+            <option value="done" {{ 'selected' if o.status=='done' }}>Выполнено</option>
+            <option value="blocked" {{ 'selected' if o.status=='blocked' }}>Блокировано</option>
+          </select>
+        </form>
+        <a class="btn btn-sm" href="{{ url_for('rows_list', view='detail') }}#row-{{ o.fp_row_id }}">Открыть статью</a>
+      </div>
+    </div>
+  {% else %}
+    <div class="empty-state"><div class="big">✓</div>Обязательств нет</div>
+  {% endfor %}
+</div>
+{% endblock %}

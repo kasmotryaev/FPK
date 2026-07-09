@@ -1,0 +1,552 @@
+{% extends "base.html" %}
+{% block title %}Дашборд квартала — ФП‑Контроль{% endblock %}
+{% block content %}
+{% set total = (summary.get('Факт',0) + summary.get('0-100',0)) %}
+{% set fact_pct = (summary.get('Факт',0) / total * 100) if total > 0 else 0 %}
+{% set plan_pct = (summary.get('0-100',0) / total * 100) if total > 0 else 0 %}
+
+<div class="page-header">
+  <div>
+    {% if view_mode == 'fy' %}
+      <h1>{{ view_fy_label }} — все кварталы</h1>
+      <div class="subtitle">{{ months | join(', ') }} · {{ total_rows }} активных строк ФП</div>
+    {% else %}
+      <h1>
+        {% if view_fq_num %}ФКВ {{ view_fq_num }}{% if qnum %} <span class="muted" style="font-size:16px;font-weight:400">(Q{{ qnum }})</span>{% endif %}{% elif qnum %}Q{{ qnum }}{% endif %}
+        {% if months %} — {{ months | join(', ') }}{% endif %}
+      </h1>
+      <div class="subtitle">
+        {% if view_fy_label %}{{ view_fy_label }} · {% endif %}{{ total_rows }} активных строк ФП за период
+      </div>
+    {% endif %}
+    {% if outlier_months %}
+      <div class="subtitle" style="color:var(--warn); margin-top:4px;">
+        ⚠ Месяцы вне основного квартала: {{ outlier_months | join(', ') }}
+      </div>
+    {% endif %}
+  </div>
+  {% if current_user_role == 'owner' and view_mode == 'quarter' and view_quarter and not view_quarter_is_finalized %}
+  <form method="POST" action="{{ url_for('fix_quarter') }}" style="margin:0"
+        onsubmit="return confirm('Зафиксировать квартал {{ view_quarter }}?\n\nКвартал будет помечен как завершённый, портал переключится на {{ view_quarter_next }}.\nОбязательства и примечания из открытых статей перейдут в {{ view_quarter_next }} автоматически при первой загрузке.')">
+    <button type="submit" class="btn" style="background:var(--warn); color:#fff; border-color:var(--warn); white-space:nowrap">
+      Зафиксировать {{ view_quarter }} →
+    </button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card section-block" id="portal-chat-card">
+  <form id="portal-chat-form" style="display:flex; gap:8px; margin-bottom:10px" onsubmit="return false;">
+    <input type="text" id="portal-chat-input" style="flex:1" placeholder="Например: как дела со Сбербанком? / какие риски сейчас горят? / что по обязательствам с просрочкой?">
+    <button class="btn" id="portal-chat-mic" type="button" title="Наговорить вопрос голосом">🎙</button>
+    <button class="btn btn-primary" id="portal-chat-submit" type="submit">Спросить</button>
+  </form>
+  <div id="portal-chat-transcript" class="muted" style="display:none"></div>
+  <div id="portal-chat-loading" class="muted" style="display:none">Думаю…</div>
+  <div id="portal-chat-error" class="tag tag-danger" style="display:none"></div>
+  <div id="portal-chat-answer" style="display:none">
+    <pre class="chat-answer-pre"></pre>
+  </div>
+</div>
+
+<script>
+(function () {
+  var form = document.getElementById('portal-chat-form');
+  var input = document.getElementById('portal-chat-input');
+  var answerBox = document.getElementById('portal-chat-answer');
+  var answerPre = answerBox.querySelector('.chat-answer-pre');
+  var transcriptBox = document.getElementById('portal-chat-transcript');
+  var loading = document.getElementById('portal-chat-loading');
+  var errorBox = document.getElementById('portal-chat-error');
+  var submitBtn = document.getElementById('portal-chat-submit');
+  var micBtn = document.getElementById('portal-chat-mic');
+
+  function showResult(res, transcript) {
+    loading.style.display = 'none';
+    submitBtn.disabled = false;
+    micBtn.disabled = false;
+    if (transcript) {
+      transcriptBox.textContent = 'Вы сказали: ' + transcript;
+      transcriptBox.style.display = 'block';
+    }
+    if (!res.ok || res.data.error) {
+      errorBox.textContent = (res.data && res.data.error) || 'Ошибка запроса';
+      errorBox.style.display = 'inline-block';
+      return;
+    }
+    answerPre.textContent = res.data.answer;
+    answerBox.style.display = 'block';
+  }
+
+  function showNetError(err) {
+    loading.style.display = 'none';
+    submitBtn.disabled = false;
+    micBtn.disabled = false;
+    errorBox.textContent = 'Ошибка сети: ' + err;
+    errorBox.style.display = 'inline-block';
+  }
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var question = input.value.trim();
+    if (!question) return;
+    answerBox.style.display = 'none';
+    errorBox.style.display = 'none';
+    transcriptBox.style.display = 'none';
+    loading.textContent = 'Думаю…';
+    loading.style.display = 'block';
+    submitBtn.disabled = true;
+    fetch("{{ url_for('chat_query') }}", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'question=' + encodeURIComponent(question),
+    })
+      .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+      .then(function (res) { showResult(res, null); })
+      .catch(showNetError);
+  });
+
+  // --- Голосовой ввод (MediaRecorder -> /chat/voice -> локальный Whisper на сервере) ---
+  var mediaRecorder = null;
+  var audioChunks = [];
+  var isRecording = false;
+
+  micBtn.addEventListener('click', function () {
+    if (isRecording) {
+      mediaRecorder.stop();
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      errorBox.textContent = 'Браузер не поддерживает запись звука (нужен HTTPS или localhost)';
+      errorBox.style.display = 'inline-block';
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      audioChunks = [];
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = function (e) { if (e.data && e.data.size) audioChunks.push(e.data); };
+      mediaRecorder.onstop = function () {
+        stream.getTracks().forEach(function (t) { t.stop(); });
+        isRecording = false;
+        micBtn.textContent = '🎙';
+        micBtn.classList.remove('recording');
+
+        var blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+        var formData = new FormData();
+        formData.append('audio', blob, 'voice.webm');
+
+        answerBox.style.display = 'none';
+        errorBox.style.display = 'none';
+        transcriptBox.style.display = 'none';
+        loading.textContent = 'Распознаю голос…';
+        loading.style.display = 'block';
+        submitBtn.disabled = true;
+        micBtn.disabled = true;
+
+        fetch("{{ url_for('chat_voice_query') }}", { method: 'POST', body: formData })
+          .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+          .then(function (res) { showResult(res, res.data && res.data.question); })
+          .catch(showNetError);
+      };
+      mediaRecorder.start();
+      isRecording = true;
+      micBtn.textContent = '⏹';
+      micBtn.classList.add('recording');
+    }).catch(function (err) {
+      errorBox.textContent = 'Не удалось получить доступ к микрофону: ' + err;
+      errorBox.style.display = 'inline-block';
+    });
+  });
+})();
+</script>
+
+{% if current_user_role == 'owner' and pending_changes_total %}
+<a href="{{ url_for('changes_view') }}" class="card section-block" style="display:flex; justify-content:space-between; align-items:center; text-decoration:none; border-color:var(--warn);">
+  <div>
+    <strong style="color:var(--ink-900)">{{ pending_changes_total }} непросмотренных изменений</strong>
+    <div class="obl-meta" style="margin-top:2px">
+      новых статей — {{ pending_changes.new }}, закрытых/обнулённых — {{ pending_changes.closed }}, прочих — {{ pending_changes.other }}
+    </div>
+  </div>
+  <span class="tag tag-warn">Смотреть →</span>
+</a>
+{% endif %}
+
+<div class="card section-block">
+  <div class="section-title">Деньги периода</div>
+  <div class="subtitle" style="margin-bottom:10px">Факт и план 0‑100 — по всем разделам. План 0‑100 и Возможности в фокусе — только Проекты, Заказные доработки, Лицензии, Сопровождение, TaaS.</div>
+  <div class="grid-4">
+    <div class="card kpi-tile" style="background:var(--fact-bg); border-color:var(--ok)">
+      <div class="kpi-label" style="color:var(--ok)">Факт (получено)</div>
+      <div class="kpi-value" style="color:var(--ok)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', portfolio=['Факт']) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(summary.get('Факт',0)).replace(',', ' ') }} ₽</a>
+      </div>
+      {% if fact_correction != 0 %}
+      <div class="kpi-sub" style="color:var(--ok)">
+        в т.ч. корректировка: {% if fact_correction > 0 %}+{% endif %}{{ "{:,.0f}".format(fact_correction).replace(',', ' ') }} ₽
+        {% for ql, note in fact_correction_notes.items() %}{% if note %} · {{ note }}{% endif %}{% endfor %}
+      </div>
+      {% endif %}
+      <div class="kpi-sub">по всем разделам</div>
+      {% if current_user_role == 'owner' and correction_quarter %}
+      <details class="fact-corr-details" style="margin-top:8px">
+        <summary style="font-size:11px; color:var(--ink-400); cursor:pointer; user-select:none">Корректировка факта…</summary>
+        <form method="POST" action="{{ url_for('save_fact_correction') }}" style="margin-top:6px; display:flex; flex-direction:column; gap:5px">
+          <input type="hidden" name="quarter_label" value="{{ correction_quarter }}">
+          <input type="number" name="correction_amount" value="{{ current_q_correction|int }}"
+                 step="1000" placeholder="±сумма, ₽"
+                 style="font-size:12px; padding:3px 6px; border:1px solid var(--ink-200); border-radius:4px; width:100%">
+          <input type="text" name="correction_note" value="{{ current_q_correction_note }}"
+                 placeholder="Примечание (необязательно)"
+                 style="font-size:12px; padding:3px 6px; border:1px solid var(--ink-200); border-radius:4px; width:100%">
+          <button type="submit" class="btn btn-sm" style="align-self:flex-start">Сохранить</button>
+        </form>
+      </details>
+      {% endif %}
+    </div>
+    <div class="card kpi-tile" style="background:var(--accent-bg); border-color:var(--accent)">
+      <div class="kpi-label" style="color:var(--accent)">Факт + План 0‑100</div>
+      <div class="kpi-value" style="color:var(--accent)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', portfolio=['Факт', '0-100']) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(summary.get('Факт',0) + summary.get('0-100',0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">получено + осталось по плану, по всем разделам</div>
+    </div>
+    <div class="card kpi-tile" style="background:var(--accent-bg); border-color:var(--accent)">
+      <div class="kpi-label" style="color:var(--accent)">План 0‑100 (фокус)</div>
+      <div class="kpi-value" style="color:var(--accent)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=focus_sections, portfolio=['0-100']) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(focus_summary.get('0-100',0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">осталось получить по плану</div>
+    </div>
+    <div class="card kpi-tile" style="background:var(--neutral-bg); border-color:var(--ink-300)">
+      <div class="kpi-label" style="color:var(--ink-500)">Возможности (фокус)</div>
+      <div class="kpi-value" style="color:var(--ink-700)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=focus_sections, portfolio=['Возможности']) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(focus_summary.get('Возможности',0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">незапланированные деньги при выполнении обязательств</div>
+    </div>
+  </div>
+</div>
+
+<div class="card section-block">
+  <div class="section-title">К получению в ближайшие {{ dpa_due_window_days }} дня (по дате ДПА)</div>
+  <div class="subtitle" style="margin-bottom:10px">Сумма 0‑100 и Возможности по активным статьям, у которых дата ДПА — с {{ dpa_window_start }} по {{ dpa_window_end }}. Факт не учитывается — эти деньги уже получены.</div>
+  <div class="grid-4">
+    {% for label, secs in dpa_due_categories %}
+    <div class="card kpi-tile" style="background:var(--warn-bg); border-color:var(--warn)">
+      <div class="kpi-label" style="color:var(--warn)">{{ label }}</div>
+      <div class="kpi-value" style="color:var(--warn)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=secs, portfolio=['0-100', 'Возможности'], dpa_from=dpa_window_start, dpa_to=dpa_window_end) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(dpa_due_by_category.get(label,0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">{{ dpa_due_counts.get(label,0) }} статей</div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="subtitle" style="margin-top:10px">
+    Итого: <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=dpa_due_all_sections, portfolio=['0-100', 'Возможности'], dpa_from=dpa_window_start, dpa_to=dpa_window_end) }}">{{ "{:,.0f}".format(dpa_due_total).replace(',', ' ') }} ₽</a> · {{ dpa_due_count_total }} статей
+  </div>
+</div>
+
+<div class="card section-block">
+  <div class="section-title">Сумма под риском (ручная отметка)</div>
+  <div class="subtitle" style="margin-bottom:10px">Сумма 0‑100 по активным статьям периода, на которых вручную выставлен уровень риска в детализации. Это отдельная отметка — не путать со списком статей без ответственного ниже.</div>
+  <div class="grid-3">
+    <div class="card kpi-tile" style="background:var(--risk-low-bg); border-color:var(--risk-low)">
+      <div class="kpi-label" style="color:var(--risk-low)">Низкий риск</div>
+      <div class="kpi-value" style="color:var(--risk-low)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', risk_level=[1]) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(risk_sums.get(1,0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">{{ risk_counts.get(1,0) }} статей · вероятность ~{{ risk_levels[1].probability }}%</div>
+    </div>
+    <div class="card kpi-tile" style="background:var(--risk-medium-bg); border-color:var(--risk-medium)">
+      <div class="kpi-label" style="color:var(--risk-medium)">Средний риск</div>
+      <div class="kpi-value" style="color:var(--risk-medium)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', risk_level=[2]) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(risk_sums.get(2,0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">{{ risk_counts.get(2,0) }} статей · вероятность ~{{ risk_levels[2].probability }}%</div>
+    </div>
+    <div class="card kpi-tile" style="background:var(--risk-high-bg); border-color:var(--risk-high)">
+      <div class="kpi-label" style="color:var(--risk-high)">Высокий риск</div>
+      <div class="kpi-value" style="color:var(--risk-high)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', risk_level=[3]) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(risk_sums.get(3,0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">{{ risk_counts.get(3,0) }} статей · вероятность ~{{ risk_levels[3].probability }}%</div>
+    </div>
+  </div>
+</div>
+
+<div class="card section-block">
+  <div class="section-title">Целевая сумма периода</div>
+  <div class="subtitle" style="margin-bottom:10px">Считается по всем разделам, включая Сопровождение и TaaS</div>
+  {% if target_amount %}
+    <div class="grid-2" style="align-items:center">
+      <div>
+        <div class="kpi-label">Цель</div>
+        <div class="kpi-value">{{ "{:,.0f}".format(target_amount).replace(',', ' ') }} ₽</div>
+        <div class="kpi-sub">достигнуто (Факт+0‑100+Возможности): <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', portfolio=['Факт', '0-100', 'Возможности']) }}">{{ "{:,.0f}".format(achieved).replace(',', ' ') }} ₽</a> — {{ "%.0f"|format(target_pct) }}%</div>
+        <div class="thermo" style="margin-top:10px">
+          <div class="seg-fact" style="width: {{ [target_pct, 100] | min }}%"></div>
+        </div>
+      </div>
+      <div>
+        {% if current_user_role == 'owner' %}
+        <form method="POST" action="{{ url_for('set_target') }}" style="display:flex; gap:8px; align-items:flex-end;">
+          <div class="form-group" style="margin-bottom:0; flex:1">
+            <label>Изменить целевую сумму</label>
+            <input type="text" name="target_amount" value="{{ target_amount|int }}">
+          </div>
+          <button class="btn btn-sm btn-primary" type="submit">Сохранить</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="grid-3" style="margin-top:18px">
+      <div class="card" style="background:var(--paper)">
+        <div class="kpi-label">Разрыв после Факта</div>
+        <div class="kpi-value" style="font-size:20px; color: {{ 'var(--ok)' if gap_after_fact <= 0 else 'var(--ink-900)' }}">
+          {{ "{:,.0f}".format(gap_after_fact).replace(',', ' ') }} ₽
+        </div>
+        <div class="kpi-sub">сколько ещё нужно добрать сверх уже полученных денег</div>
+      </div>
+      <div class="card" style="background:var(--paper)">
+        <div class="kpi-label">Разрыв после Факта + План 0‑100</div>
+        <div class="kpi-value" style="font-size:20px; color: {{ 'var(--ok)' if gap_after_0100 <= 0 else 'var(--warn)' }}">
+          {{ "{:,.0f}".format(gap_after_0100).replace(',', ' ') }} ₽
+        </div>
+        <div class="kpi-sub">сколько останется добрать, если весь план 0‑100 выполнится полностью</div>
+      </div>
+      <div class="card" style="background:var(--paper)">
+        <div class="kpi-label">Разрыв после Факта + 0‑100 + Возможности</div>
+        <div class="kpi-value" style="font-size:20px; color: {{ 'var(--ok)' if gap_after_opportunities <= 0 else 'var(--danger)' }}">
+          {{ "{:,.0f}".format(gap_after_opportunities).replace(',', ' ') }} ₽
+        </div>
+        <div class="kpi-sub">сколько останется добрать даже если реализовать все возможности</div>
+      </div>
+    </div>
+  {% else %}
+    <div class="subtitle" style="margin-bottom:10px">Целевая сумма на этот период ещё не задана</div>
+    {% if current_user_role == 'owner' %}
+    <form method="POST" action="{{ url_for('set_target') }}" style="display:flex; gap:8px; max-width:400px;">
+      <div class="form-group" style="margin-bottom:0; flex:1">
+        <input type="text" name="target_amount" placeholder="Например: 120000000">
+      </div>
+      <button class="btn btn-primary" type="submit">Задать цель</button>
+    </form>
+    {% endif %}
+  {% endif %}
+</div>
+
+<div class="card section-block">
+  <div class="section-title">Разбивка по разделам ФП</div>
+  <table>
+    <thead><tr><th>Раздел</th><th class="num">Факт</th><th class="num">0‑100</th><th class="num">Возможности</th></tr></thead>
+    <tbody>
+      <tr style="font-weight:700; background:var(--ink-100);">
+        <td>Итого</td>
+        <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', portfolio=['Факт']) }}">{{ "{:,.0f}".format(section_totals.get('Факт',0)).replace(',', ' ') }} ₽</a></td>
+        <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', portfolio=['0-100']) }}">{{ "{:,.0f}".format(section_totals.get('0-100',0)).replace(',', ' ') }} ₽</a></td>
+        <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', portfolio=['Возможности']) }}">{{ "{:,.0f}".format(section_totals.get('Возможности',0)).replace(',', ' ') }} ₽</a></td>
+      </tr>
+      {% for sec, vals in by_section.items() %}
+      <tr>
+        <td>{{ sec }}</td>
+        {% if sec == 'Без раздела' %}
+        <td class="num">{{ "{:,.0f}".format(vals.get('Факт',0)).replace(',', ' ') }} ₽</td>
+        <td class="num">{{ "{:,.0f}".format(vals.get('0-100',0)).replace(',', ' ') }} ₽</td>
+        <td class="num">{{ "{:,.0f}".format(vals.get('Возможности',0)).replace(',', ' ') }} ₽</td>
+        {% else %}
+        <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=[sec], portfolio=['Факт']) }}">{{ "{:,.0f}".format(vals.get('Факт',0)).replace(',', ' ') }} ₽</a></td>
+        <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=[sec], portfolio=['0-100']) }}">{{ "{:,.0f}".format(vals.get('0-100',0)).replace(',', ' ') }} ₽</a></td>
+        <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=[sec], portfolio=['Возможности']) }}">{{ "{:,.0f}".format(vals.get('Возможности',0)).replace(',', ' ') }} ₽</a></td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card section-block">
+  <div class="section-title">Прогресс выполнения периода</div>
+  <div class="thermo">
+    <div class="seg-fact" style="width: {{ fact_pct }}%"></div>
+    <div class="seg-0100" style="width: {{ plan_pct }}%"></div>
+  </div>
+  <div class="thermo-legend">
+    <span><span class="dot" style="background:var(--ok)"></span> Факт — {{ "%.0f"|format(fact_pct) }}%</span>
+    <span><span class="dot" style="background:var(--accent)"></span> Осталось по плану — {{ "%.0f"|format(plan_pct) }}%</span>
+    <span><span class="dot" style="background:var(--ink-300)"></span> Возможности (вне базового плана) — <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', portfolio=['Возможности']) }}">{{ "{:,.0f}".format(summary.get('Возможности',0)).replace(',', ' ') }} ₽</a></span>
+  </div>
+</div>
+
+<div class="grid-2 section-block">
+  <div class="card">
+    <div class="section-title">Просроченные обязательства ({{ overdue|length }})</div>
+    {% if overdue %}
+      {% for o in overdue %}
+        <div class="obl-item">
+          <div class="obl-item-head">
+            <span class="obl-title">{{ o.title }}</span>
+            <span class="tag tag-danger">просрочено: {{ o.due_date }}</span>
+          </div>
+          <div class="obl-meta">{{ o.client_name }} · {{ o.project_name }} · отв.: {{ o.responsible_name }}</div>
+          <div class="obl-meta"><a href="{{ url_for('rows_list', q=o.client_name, view='detail') }}#row-{{ o.fp_row_id }}">Открыть строку →</a></div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty-state"><div class="big">✓</div>Просрочек нет</div>
+    {% endif %}
+  </div>
+  <div class="card">
+    <div class="section-title">Горящие сроки, ≤3 дня ({{ due_soon|length }})</div>
+    {% if due_soon %}
+      {% for o in due_soon %}
+        <div class="obl-item">
+          <div class="obl-item-head">
+            <span class="obl-title">{{ o.title }}</span>
+            <span class="tag tag-warn">срок: {{ o.due_date }}</span>
+          </div>
+          <div class="obl-meta">{{ o.client_name }} · {{ o.project_name }} · отв.: {{ o.responsible_name }}</div>
+          <div class="obl-meta"><a href="{{ url_for('rows_list', q=o.client_name, view='detail') }}#row-{{ o.fp_row_id }}">Открыть строку →</a></div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty-state"><div class="big">—</div>Нет горящих сроков</div>
+    {% endif %}
+  </div>
+</div>
+
+<form class="filters card" method="GET" style="margin-bottom:20px">
+  <select name="client" onchange="this.form.submit()">
+    <option value="">Все клиенты</option>
+    {% for c in clients %}
+      <option value="{{ c }}" {{ 'selected' if filter_client == c }}>{{ c }}</option>
+    {% endfor %}
+  </select>
+  <select name="responsible" onchange="this.form.submit()">
+    <option value="">Все ответственные</option>
+    {% for name in all_responsible %}
+      <option value="{{ name }}" {{ 'selected' if filter_responsible == name }}>{{ name }}</option>
+    {% endfor %}
+  </select>
+  <span class="muted" style="font-size:12px">Фильтр влияет на статьи без ответственного ниже, просрочки/горящие сроки выше и сводку Сопровождения/TaaS (KPI и цель — по всему периоду, без фильтра)</span>
+</form>
+
+<div class="card section-block">
+  <div class="section-title">Статьи без оформленного обязательства/ответственного ({{ risky_rows|length }})</div>
+  <div class="subtitle" style="margin-bottom:10px">«Проекты» и «Заказные доработки» обязаны иметь обязательство за одним из руководителей команд; «Докупки» и «Лицензии» — обязательство за Owner. Сопровождение и TaaS сюда не входят — для них отдельный блок без требования об ответственном. Показаны только статьи с суммой 0‑100 от 300 000 ₽ — мелкие суммы скрыты, чтобы не перегружать список.</div>
+  {% if risky_rows %}
+    <table>
+      <thead><tr><th>Клиент</th><th>Проект</th><th>Раздел</th><th>Нужен ответственный</th><th>ДПА</th><th class="num">Сумма 0‑100</th><th></th></tr></thead>
+      <tbody>
+        <tr style="font-weight:700; background:var(--ink-100);">
+          <td colspan="5">Итого риск</td>
+          <td class="num">{{ "{:,.0f}".format(risky_rows | sum(attribute='amount_0_100')).replace(',', ' ') }} ₽</td>
+          <td></td>
+        </tr>
+        {% for r in risky_rows %}
+        <tr>
+          <td>{{ r.client_name }}</td>
+          <td>{{ r.project_name }}</td>
+          <td><span class="tag tag-neutral">{{ r.section }}</span></td>
+          <td>
+            {% if r.section in team_lead_sections %}
+              <span class="tag tag-danger">рук. команды</span>
+            {% else %}
+              <span class="tag tag-warn">Owner</span>
+            {% endif %}
+          </td>
+          <td>{{ r.dpa_date or '—' }}</td>
+          <td class="num">{{ "{:,.0f}".format(r.amount_0_100 or 0).replace(',', ' ') }} ₽</td>
+          <td style="white-space:nowrap">
+            <div style="display:flex; gap:6px; justify-content:flex-end">
+              <details class="popover">
+                <summary class="btn btn-sm" title="Быстро назначить ответственного без дополнительных деталей">+ Ответственный</summary>
+                <div class="popover-panel" style="width:230px">
+                  <form method="POST" action="{{ url_for('add_obligation', row_id=r.id) }}">
+                    <input type="hidden" name="title" value="Закрыть статью «{{ r.project_name }}»">
+                    <input type="hidden" name="next" value="{{ request.full_path }}">
+                    <div class="form-group" style="margin-bottom:8px">
+                      <label>Ответственный</label>
+                      <select name="responsible_name" required>
+                        <option value="">— выберите —</option>
+                        {% if r.section in team_lead_sections %}
+                          {% for tl in team_leads %}<option value="{{ tl }}">{{ tl }}</option>{% endfor %}
+                        {% else %}
+                          {% for name in all_responsible %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+                        {% endif %}
+                      </select>
+                    </div>
+                    <div class="popover-actions"><button class="btn btn-sm btn-primary" type="submit">Назначить</button></div>
+                  </form>
+                </div>
+              </details>
+              <details class="popover">
+                <summary class="btn btn-sm btn-primary" title="Добавить обязательство с текстом, ответственным и сроком">+ Обязательство</summary>
+                <div class="popover-panel" style="width:260px">
+                  <form method="POST" action="{{ url_for('add_obligation', row_id=r.id) }}">
+                    <input type="hidden" name="next" value="{{ request.full_path }}">
+                    <div class="form-group" style="margin-bottom:8px">
+                      <label>Текст обязательства</label>
+                      <input type="text" name="title" required placeholder="Например: подписать акт">
+                    </div>
+                    <div class="form-group" style="margin-bottom:8px">
+                      <label>Ответственный</label>
+                      <select name="responsible_name" required>
+                        <option value="">— выберите —</option>
+                        {% if r.section in team_lead_sections %}
+                          {% for tl in team_leads %}<option value="{{ tl }}">{{ tl }}</option>{% endfor %}
+                        {% else %}
+                          {% for name in all_responsible %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+                        {% endif %}
+                      </select>
+                    </div>
+                    <div class="form-group" style="margin-bottom:8px">
+                      <label>Срок</label>
+                      <input type="date" name="due_date" value="{{ r.dpa_date }}">
+                    </div>
+                    <div class="popover-actions"><button class="btn btn-sm btn-primary" type="submit">Сохранить</button></div>
+                  </form>
+                </div>
+              </details>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="empty-state"><div class="big">✓</div>Все статьи закреплены за ответственными</div>
+  {% endif %}
+</div>
+
+<div class="card section-block">
+  <div class="section-title">Сопровождение и TaaS — для отслеживания ({{ support_by_client|length }} клиентов)</div>
+  <div class="subtitle" style="margin-bottom:10px">Ответственный по этим разделам не нужен — это сводка по клиентам только для наблюдения, в риски и обязательства она не попадает.</div>
+  {% if support_by_client %}
+    <table class="agg-table">
+      <thead><tr><th>Клиент</th><th class="num agg-fact-th">Факт</th><th class="num">0‑100</th><th class="num">Возможности</th><th class="num">Итого</th></tr></thead>
+      <tbody>
+        <tr style="font-weight:700; background:var(--ink-100);">
+          <td>Итого</td>
+          <td class="num agg-fact-cell"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=tracking_only_sections, portfolio=['Факт']) }}">{{ "{:,.0f}".format(support_totals.get('Факт',0)).replace(',', ' ') }} ₽</a></td>
+          <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=tracking_only_sections, portfolio=['0-100']) }}">{{ "{:,.0f}".format(support_totals.get('0-100',0)).replace(',', ' ') }} ₽</a></td>
+          <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=tracking_only_sections, portfolio=['Возможности']) }}">{{ "{:,.0f}".format(support_totals.get('Возможности',0)).replace(',', ' ') }} ₽</a></td>
+          <td class="num">{{ "{:,.0f}".format(support_totals.get('0-100',0) + support_totals.get('Возможности',0)).replace(',', ' ') }} ₽</td>
+        </tr>
+        {% for client, vals in support_by_client.items() %}
+        <tr>
+          <td>{{ client }}</td>
+          <td class="num agg-fact-cell"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=tracking_only_sections, client=[client], portfolio=['Факт']) }}">{{ "{:,.0f}".format(vals.get('Факт',0)).replace(',', ' ') }} ₽</a></td>
+          <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=tracking_only_sections, client=[client], portfolio=['0-100']) }}">{{ "{:,.0f}".format(vals.get('0-100',0)).replace(',', ' ') }} ₽</a></td>
+          <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=tracking_only_sections, client=[client], portfolio=['Возможности']) }}">{{ "{:,.0f}".format(vals.get('Возможности',0)).replace(',', ' ') }} ₽</a></td>
+          <td class="num">{{ "{:,.0f}".format(vals.get('0-100',0) + vals.get('Возможности',0)).replace(',', ' ') }} ₽</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="empty-state"><div class="big">∅</div>Нет данных по Сопровождению и TaaS за период</div>
+  {% endif %}
+</div>
+{% endblock %}

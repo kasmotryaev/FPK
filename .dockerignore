@@ -1,0 +1,27 @@
+# ── Личные данные — НЕ попадают в образ ──────────────────────────
+app/data/
+bot/token.txt
+logs/
+launchd/
+fp_portal.db
+
+# ── Кэш и временные файлы ──────────────────────────────────────
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.DS_Store
+*.command
+
+# ── Git ────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── Docker-файлы (не нужны внутри образа) ─────────────────────
+docker-compose.yml
+.dockerignore
+README_DOCKER.md
+README.md
+
+# ── Скрипты для macOS ──────────────────────────────────────────
+seed_employees.py

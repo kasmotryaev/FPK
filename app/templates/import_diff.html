@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Детали загрузки — ФП‑Контроль{% endblock %}
+{% block content %}
+<div class="breadcrumb"><a href="{{ url_for('import_view') }}">← Загрузка Excel</a></div>
+<div class="page-header">
+  <div>
+    <h1>Изменения при загрузке: {{ log.filename }}</h1>
+    <div class="subtitle">{{ log.imported_at }}</div>
+  </div>
+</div>
+
+<div class="card section-block">
+  <div class="section-title">Изменённые строки ({{ diff.changed|length }}{% if diff.changed_truncated %}+{% endif %})</div>
+  {% if diff.changed %}
+    <table>
+      <thead><tr><th>Клиент</th><th>Проект</th><th>Раздел</th><th>Что изменилось</th></tr></thead>
+      <tbody>
+        {% for c in diff.changed %}
+        <tr>
+          <td>{{ c.client }}</td>
+          <td>{{ c.project }}</td>
+          <td><span class="tag tag-neutral">{{ c.section }}</span></td>
+          <td>
+            {% for ch in c.changes %}
+              <div>{{ ch.field }}: <span class="muted">{{ ch.old if ch.old is not none else '—' }}</span> → <strong>{{ ch.new if ch.new is not none else '—' }}</strong></div>
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="empty-state"><div class="big">—</div>Изменённых строк не было</div>
+  {% endif %}
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="section-title">Новые строки ({{ diff.new|length }}{% if diff.new_truncated %}+{% endif %})</div>
+    {% if diff.new %}
+      <table>
+        <thead><tr><th>Клиент</th><th>Проект</th><th>Портфель</th><th class="num">Сумма</th></tr></thead>
+        <tbody>
+          {% for n in diff.new %}
+          <tr>
+            <td>{{ n.client }}</td><td>{{ n.project }}</td><td>{{ n.portfolio }}</td>
+            <td class="num">{{ "{:,.0f}".format(n.amount or 0).replace(',', ' ') }} ₽</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty-state"><div class="big">—</div>Новых строк не было</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <div class="section-title">Деактивированные строки ({{ diff.deactivated|length }}{% if diff.deactivated_truncated %}+{% endif %})</div>
+    <div class="subtitle" style="margin-bottom:10px">Пропали из файла — не удалены, обязательства сохранены</div>
+    {% if diff.deactivated %}
+      <table>
+        <thead><tr><th>Клиент</th><th>Проект</th><th>Портфель</th><th class="num">Сумма</th></tr></thead>
+        <tbody>
+          {% for d in diff.deactivated %}
+          <tr>
+            <td>{{ d.client }}</td><td>{{ d.project }}</td><td>{{ d.portfolio }}</td>
+            <td class="num">{{ "{:,.0f}".format(d.amount or 0).replace(',', ' ') }} ₽</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="empty-state"><div class="big">✓</div>Ничего не пропало</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

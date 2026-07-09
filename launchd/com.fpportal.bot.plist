@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.fpportal.bot</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>run_bot.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/kirillsmotrayev/Documents/Работа/Андминистративная деятельность/Новые возможности/Проекты ИИ/Планирование ФПК/fp-portal</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/kirillsmotrayev/Documents/Работа/Андминистративная деятельность/Новые возможности/Проекты ИИ/Планирование ФПК/fp-portal/logs/bot.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/kirillsmotrayev/Documents/Работа/Андминистративная деятельность/Новые возможности/Проекты ИИ/Планирование ФПК/fp-portal/logs/bot.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <!-- Если api.telegram.org недоступен без VPN, укажите здесь прокси (см. README,
+             раздел "Прокси (если api.telegram.org заблокирован без VPN)") и раскомментируйте: -->
+        <!--
+        <key>FP_BOT_PROXY</key>
+        <string>http://127.0.0.1:7890</string>
+        -->
+    </dict>
+</dict>
+</plist>

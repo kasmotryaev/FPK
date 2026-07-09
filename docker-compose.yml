@@ -1,0 +1,27 @@
+version: "3.9"
+
+services:
+  web:
+    build: .
+    image: fp-portal:latest
+    container_name: fp-portal
+    ports:
+      - "5001:5001"
+    volumes:
+      # Все данные (база + загруженные файлы) хранятся в именованном томе.
+      # Данные сохраняются между перезапусками и обновлениями контейнера.
+      - fp_data:/app/app/data
+    environment:
+      # ОБЯЗАТЕЛЬНО: замените на случайную строку (любой набор символов)
+      - FP_PORTAL_SECRET=ЗАМЕНИТЕ_НА_СЛУЧАЙНУЮ_СТРОКУ
+
+      # Ollama (чат «Спросить портал») — нужна локальная установка Ollama.
+      # macOS / Windows: host.docker.internal — это и есть ваш компьютер.
+      # Linux: замените host.docker.internal на 172.17.0.1 (обычный адрес хоста).
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - OLLAMA_MODEL=qwen3:8b
+    restart: unless-stopped
+
+volumes:
+  fp_data:
+    driver: local

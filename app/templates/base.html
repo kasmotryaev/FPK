@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}ФП-Контроль{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ asset_version }}">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        ФП‑Контроль
+        <small>Мониторинг обязательств по статьям</small>
+      </div>
+      <nav>
+        <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint == 'dashboard' }}"><span class="nav-icon">📊</span>Дашборд квартала</a>
+        <a href="{{ url_for('rows_list') }}" class="{{ 'active' if request.endpoint == 'rows_list' }}"><span class="nav-icon">📋</span>Детализация</a>
+        <a href="{{ url_for('my_obligations') }}" class="{{ 'active' if request.endpoint == 'my_obligations' }}"><span class="nav-icon">✅</span>Мои обязательства</a>
+        <a href="{{ url_for('archive_view') }}" class="{{ 'active' if request.endpoint == 'archive_view' }}"><span class="nav-icon">🗂</span>Архив кварталов</a>
+        <a href="{{ url_for('timesheets') }}" class="{{ 'active' if request.endpoint in ('timesheets','ts_import','ts_import_employees','ts_add_employee','ts_delete_employee','ts_clear_employees') }}"><span class="nav-icon">⏱</span>Трудозатраты</a>
+        <a href="{{ url_for('ts_compare') }}" class="{{ 'active' if request.endpoint == 'ts_compare' }}"><span class="nav-icon">⚖️</span>Расходы vs Доходы</a>
+        {% if current_user_role == 'owner' %}
+        <a href="{{ url_for('changes_view') }}" class="{{ 'active' if request.endpoint == 'changes_view' }}">
+          <span class="nav-icon">🔔</span>Изменения
+          {% if pending_changes_total %}<span class="tag tag-warn" style="margin-left:6px">{{ pending_changes_total }}</span>{% endif %}
+        </a>
+        <a href="{{ url_for('import_view') }}" class="{{ 'active' if request.endpoint == 'import_view' }}"><span class="nav-icon">⚙️</span>Настройки</a>
+        <a href="{{ url_for('admin_users') }}" class="{{ 'active' if request.endpoint == 'admin_users' }}"><span class="nav-icon">👤</span>Пользователи</a>
+        {% endif %}
+      </nav>
+      {% if available_fiscal_years %}
+      <div class="sidebar-quarters">
+        <div class="sidebar-quarters-label">Финансовые годы</div>
+        {% for fy in available_fiscal_years %}
+        <form method="POST" action="{{ url_for('set_quarter_view') }}" style="margin:0">
+          <input type="hidden" name="mode" value="fy">
+          <input type="hidden" name="fy" value="{{ fy.key }}">
+          <input type="hidden" name="next" value="{{ request.path }}{% if request.query_string %}?{{ request.query_string.decode() }}{% endif %}">
+          <button type="submit" class="quarter-btn{% if view_mode == 'fy' and fy.key == view_fy %} quarter-btn-active{% endif %}">
+            {{ fy.label }}
+            <span class="quarter-btn-count">{{ fy.count }}</span>
+          </button>
+        </form>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if available_quarters %}
+      <div class="sidebar-quarters" style="border-top:none; padding-top:2px">
+        <div class="sidebar-quarters-label">Кварталы</div>
+        {% for q in available_quarters %}
+        <div class="quarter-row">
+          <form method="POST" action="{{ url_for('set_quarter_view') }}" style="flex:1;margin:0;min-width:0">
+            <input type="hidden" name="mode" value="quarter">
+            <input type="hidden" name="quarter" value="{{ q.label }}">
+            <input type="hidden" name="next" value="{{ request.path }}{% if request.query_string %}?{{ request.query_string.decode() }}{% endif %}">
+            <button type="submit" class="quarter-btn{% if view_mode == 'quarter' and q.label == view_quarter %} quarter-btn-active{% endif %}">
+              <span>{{ q.label }}{% if q.is_finalized %} 🔒{% endif %} <span class="quarter-fq-tag">ФКВ{{ q.fq_num }}</span></span>
+              <span class="quarter-btn-count">{{ q.count }}</span>
+            </button>
+          </form>
+          {% if q.is_finalized and current_user_role == 'owner' %}
+          <form method="POST" action="{{ url_for('unfix_quarter') }}" style="margin:0;flex-shrink:0"
+                onsubmit="return confirm('Снять фиксацию квартала {{ q.label }}?')">
+            <input type="hidden" name="quarter" value="{{ q.label }}">
+            <button type="submit" class="quarter-unfix-btn" title="Снять фиксацию">×</button>
+          </form>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="sidebar-footer">
+        {{ current_user_name }}
+        <span class="role-tag">
+          {% if current_user_role == 'owner' %}Руководитель продукта
+          {% elif current_user_role == 'team_lead' %}Руководитель команды
+          {% else %}Наблюдатель{% endif %}
+        </span>
+        <div class="scale-ctrl">
+          <button class="scale-btn" onclick="pgScaleChange(-0.1)" title="Уменьшить">A−</button>
+          <span class="scale-val" id="pg-scale-val">100%</span>
+          <button class="scale-btn" onclick="pgScaleChange(+0.1)" title="Увеличить">A+</button>
+        </div>
+        <div style="margin-top:4px"><a href="{{ url_for('logout') }}">Выйти</a></div>
+      </div>
+    </aside>
+    <main class="main" id="pg-main">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endwith %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+<script>
+(function () {
+  var KEY = 'fp_page_scale', MIN = 0.7, MAX = 1.5;
+  var cur = 1.0;
+  function apply(s) {
+    cur = Math.round(Math.min(Math.max(s, MIN), MAX) * 10) / 10;
+    document.getElementById('pg-main').style.zoom = cur;
+    var el = document.getElementById('pg-scale-val');
+    if (el) el.textContent = Math.round(cur * 100) + '%';
+    try { localStorage.setItem(KEY, cur); } catch (e) {}
+  }
+  window.pgScaleChange = function (d) { apply(cur + d); };
+  try { var s = parseFloat(localStorage.getItem(KEY)); if (s && !isNaN(s)) apply(s); else apply(1.0); }
+  catch (e) { apply(1.0); }
+})();
+</script>
+</body>
+</html>

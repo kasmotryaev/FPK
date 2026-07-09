@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+{% block title %}Трудозатраты — ФП-Контроль{% endblock %}
+{% block content %}
+
+{# ═══════════════════════════════════════════════════════
+   Макрос: рендер иерархии dept→division→employees/projects
+   Аргументы:
+     hier      — список dept-элементов
+     total_h   — total_hours для % в заголовке
+     emp_names — set uppercase имён «моих» сотрудников
+     split     — bool: показывать мои/чужие часов отдельно
+     show_add  — bool: показывать кнопку ＋ для не-моих
+   ═══════════════════════════════════════════════════════ #}
+{% macro ts_hier(hier, total_h, emp_names, split, show_add) %}
+<div class="ts-hierarchy">
+  {% for dept_item in hier %}
+  <details class="ts-dept">
+    <summary class="ts-dept-head">
+      <span class="ts-dept-name">{{ dept_item.dept }}</span>
+      <span class="ts-dept-hours">{{ "%.1f"|format(dept_item.dept_hours) }} ч</span>
+      <span class="ts-dept-pct">{{ "%.1f"|format(dept_item.dept_hours / total_h * 100 if total_h else 0) }}%</span>
+    </summary>
+    <div class="ts-divs">
+      {% for div in dept_item.divisions %}
+      <details class="ts-div-block">
+        <summary class="ts-div-row">
+          <span class="ts-div-name">{{ div.name }}</span>
+          <span class="ts-div-bar-wrap">
+            <span class="ts-div-bar" style="width:{{ (div.hours / dept_item.dept_hours * 100)|round(1) }}%"></span>
+          </span>
+          <span class="ts-div-hours">{{ "%.1f"|format(div.hours) }} ч</span>
+        </summary>
+        <div class="ts-div-tabs">
+          <div class="ts-tab-buttons">
+            <button class="ts-tab-btn ts-tab-active" onclick="tsTab(this,'emp')">
+              👥 Сотрудники <span class="ts-tab-cnt">{{ div.employees|length }}</span>
+            </button>
+            <button class="ts-tab-btn" onclick="tsTab(this,'proj')">
+              📋 Проекты <span class="ts-tab-cnt">{{ div.projects|length }}</span>
+            </button>
+          </div>
+          {# Вкладка сотрудников #}
+          <div class="ts-tab-pane ts-tab-emp">
+            {% for emp in div.employees %}
+            {% set is_mine = emp.name.upper() in emp_names %}
+            <details class="ts-emp-details">
+              <summary class="ts-emp-line {{ 'ts-mine' if is_mine }}">
+                <span class="ts-emp-line-name">{{ emp.name }}</span>
+                <span class="ts-emp-line-hours">{{ "%.1f"|format(emp.hours) }} ч</span>
+                {% if not is_mine and show_add and emp.name != '—' %}
+                <form method="POST" action="{{ url_for('ts_add_employee') }}" style="display:inline"
+                      onclick="event.stopPropagation()">
+                  <input type="hidden" name="full_name" value="{{ emp.name }}">
+                  <button type="submit" class="ts-add-btn" title="Добавить в справочник">＋</button>
+                </form>
+                {% elif is_mine %}
+                <span class="ts-mine-badge">✓</span>
+                {% endif %}
+              </summary>
+              {% if emp.tasks %}
+              <div class="ts-task-list">
+                {% for task in emp.tasks %}
+                <div class="ts-task-row">
+                  {% if task.task_num %}<span class="ts-task-num">{{ task.task_num }}</span>{% endif %}
+                  <span class="ts-task-name" title="{{ task.task_name or task.project }}">{{ task.task_name or task.project }}</span>
+                  <span class="ts-task-proj" title="{{ task.project }}">{{ task.proj_num or task.project }}</span>
+                  <span class="ts-task-hours">{{ "%.1f"|format(task.hours) }}</span>
+                </div>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </details>
+            {% endfor %}
+          </div>
+          {# Вкладка проектов #}
+          <div class="ts-tab-pane ts-tab-proj" style="display:none">
+            {% for proj in div.projects %}
+            <div class="ts-proj-row">
+              <span class="ts-proj-name" title="{{ proj.name }}">{{ proj.name }}</span>
+              {% if proj.client %}<span class="ts-proj-client">{{ proj.client }}</span>{% endif %}
+              {% if proj.work_type %}<span class="ts-proj-wtype">{{ proj.work_type }}</span>{% endif %}
+              {% if split %}
+              <span class="ts-proj-hours ts-proj-split">
+                <span class="ts-split-mine">{{ "%.1f"|format(proj.my_hours) }}</span>
+                <span class="ts-split-sep">/</span>
+                <span class="ts-split-other">{{ "%.1f"|format(proj.others_hours) }}</span>
+              </span>
+              {% else %}
+              <span class="ts-proj-hours">{{ "%.1f"|format(proj.hours) }}</span>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </details>
+      {% endfor %}
+    </div>
+  </details>
+  {% endfor %}
+</div>
+{% endmacro %}
+
+{# ════════════════════════════════════════════════════════ #}
+
+<div class="page-header">
+  <h1 class="page-title">Трудозатраты · {{ rp_filter }}</h1>
+  <p class="page-subtitle">Списание трудозатрат по данным отчёта распределения ресурсов</p>
+</div>
+
+{# ── Панель управления ─────────────────────────────────────── #}
+<div class="ts-toolbar">
+
+  {% if current_user_role == 'owner' %}
+  <details class="ts-upload-details">
+    <summary>↑ Загрузить отчёт трудозатрат</summary>
+    <form method="POST" action="{{ url_for('ts_import') }}" enctype="multipart/form-data" class="ts-upload-form">
+      <label>Excel-файл (.xlsx, .xlsb) — Отчёт распределение ресурсов:</label>
+      <div class="ts-upload-row">
+        <input type="file" name="ts_file" accept=".xlsx,.xls,.xlsb">
+        <button class="btn btn-primary" type="submit">Загрузить</button>
+      </div>
+    </form>
+  </details>
+  {% endif %}
+
+  {% if imports %}
+  <div class="ts-import-selector">
+    <span class="ts-label">Период:</span>
+    <div class="ts-import-list">
+      {% for imp in imports %}
+      <a href="{{ url_for('timesheets', import_id=imp.id) }}"
+         class="ts-import-chip {{ 'ts-import-chip-active' if imp.id == selected_import_id }}">
+        {{ imp.period_label or imp.filename }}
+        <span class="ts-chip-count">{{ imp.rows_total }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% if current_import and current_user_role == 'owner' %}
+    <form method="POST" action="{{ url_for('ts_delete_import', import_id=current_import.id) }}"
+          onsubmit="return confirm('Удалить этот импорт?')" style="margin-left:auto;flex-shrink:0">
+      <button class="btn btn-sm btn-danger" type="submit">Удалить</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
+</div>
+
+{# ── Основной контент ─────────────────────────────────────── #}
+{% if not imports %}
+<div class="empty-state" style="margin-top:64px">
+  <div class="big">📊</div>
+  Загрузите отчёт распределения ресурсов, чтобы увидеть трудозатраты
+</div>
+
+{% else %}
+<div class="ts-layout">
+
+  {# ── Левая колонка: иерархия ── #}
+  <div class="ts-main">
+    {% if hierarchy %}
+
+    {# Сводная строка #}
+    <div class="ts-summary-bar">
+      <div class="ts-sum-item ts-sum-total">
+        <span class="ts-sum-label">Итого часов</span>
+        <span class="ts-sum-val">{{ "%.1f"|format(total_hours) }}</span>
+      </div>
+      <div class="ts-sum-item">
+        <span class="ts-sum-label">Департаменты</span>
+        <span class="ts-sum-val">{{ hierarchy|length }}</span>
+      </div>
+      {% if import_emp_names %}
+      <div class="ts-sum-item">
+        <span class="ts-sum-label">Сотрудников в периоде</span>
+        <span class="ts-sum-val">{{ import_emp_names|length }}</span>
+      </div>
+      <div class="ts-sum-item">
+        <span class="ts-sum-label">Мои / Всего</span>
+        <span class="ts-sum-val">{{ (import_emp_names | map('upper') | select('in', emp_names) | list | length) }} / {{ import_emp_names|length }}</span>
+      </div>
+      {% endif %}
+    </div>
+
+    {# ── Все списания ── #}
+    {{ ts_hier(hierarchy, total_hours, emp_names, false, current_user_role == 'owner') }}
+
+    {# ── Блок 2: проекты без моих сотрудников ── #}
+    {% if emp_names and hierarchy_no_mine %}
+    <div class="ts-extra-section">
+      <div class="ts-extra-hdr">
+        <span class="ts-extra-title">Без моих сотрудников</span>
+        <span class="ts-extra-sub">только чужие списания</span>
+        <span class="ts-extra-hours">{{ "%.1f"|format(hours_no_mine) }} ч</span>
+      </div>
+      {{ ts_hier(hierarchy_no_mine, hours_no_mine, emp_names, false, false) }}
+    </div>
+    {% endif %}
+
+    {# ── Блок 3: мои меньше чужих ── #}
+    {% if emp_names and hierarchy_less_mine %}
+    <div class="ts-extra-section">
+      <div class="ts-extra-hdr">
+        <span class="ts-extra-title">Мои меньше чужих</span>
+        <span class="ts-extra-sub">
+          <span class="ts-split-mine">■ свои</span> /
+          <span class="ts-split-other">■ другие</span>, ч
+        </span>
+        <span class="ts-extra-hours">{{ "%.1f"|format(hours_less_mine) }} ч</span>
+      </div>
+      {{ ts_hier(hierarchy_less_mine, hours_less_mine, emp_names, true, false) }}
+    </div>
+    {% endif %}
+
+    {% elif selected_import_id %}
+    <div class="empty-state" style="margin-top:48px">
+      <div class="big">∅</div>
+      Данных для РП «{{ rp_filter }}» в этом импорте не найдено
+    </div>
+    {% endif %}
+  </div>
+
+  {# ── Правая колонка: справочник сотрудников ── #}
+  <div class="ts-sidebar">
+    <div class="ts-emp-card">
+      <div class="ts-emp-header">
+        <span class="ts-emp-title">Мои сотрудники</span>
+        <span class="ts-emp-badge">{{ employees|length }}</span>
+      </div>
+
+      {% if current_user_role == 'owner' %}
+      <form method="POST" action="{{ url_for('ts_add_employee') }}" class="ts-emp-add-form">
+        <input type="text" name="full_name" placeholder="ФИО сотрудника" class="ts-emp-input" required>
+        <button type="submit" class="btn btn-sm btn-primary">+</button>
+      </form>
+      {% endif %}
+
+      {% if employees %}
+      <div class="ts-emp-list">
+        {% for emp in employees %}
+        {% set in_import = emp.full_name.upper() in import_emp_names %}
+        <div class="ts-emp-row {{ 'ts-emp-active' if in_import }}">
+          <span class="ts-emp-name">{{ emp.full_name }}</span>
+          {% if import_emp_names %}
+          <span class="ts-emp-status {{ 'ts-status-yes' if in_import else 'ts-status-no' }}"
+                title="{{ 'Есть в периоде' if in_import else 'Нет в периоде' }}">{{ '✓' if in_import else '—' }}</span>
+          {% endif %}
+          {% if current_user_role == 'owner' %}
+          <form method="POST" action="{{ url_for('ts_delete_employee', emp_id=emp.id) }}"
+                onsubmit="return confirm('Удалить «{{ emp.full_name }}»?')">
+            <button type="submit" class="ts-emp-del" title="Удалить">×</button>
+          </form>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="ts-emp-empty">Список пуст. Запустите <code>seed_employees.py</code> или добавьте вручную.</div>
+      {% endif %}
+
+      {% if current_user_role == 'owner' %}
+      <div class="ts-emp-footer">
+        <details class="ts-emp-bulk">
+          <summary>Загрузить из файла</summary>
+          <form method="POST" action="{{ url_for('ts_import_employees') }}" enctype="multipart/form-data" class="ts-upload-form">
+            <label style="font-size:12px;color:var(--ink-500)">Excel: строка 1 — заголовок, далее ФИО в первом столбце</label>
+            <div class="ts-upload-row">
+              <input type="file" name="emp_file" accept=".xlsx,.xls">
+              <button class="btn btn-sm btn-primary" type="submit">Загрузить</button>
+            </div>
+          </form>
+        </details>
+        {% if employees %}
+        <form method="POST" action="{{ url_for('ts_clear_employees') }}"
+              onsubmit="return confirm('Очистить весь список?')" style="margin-top:4px">
+          <button class="btn btn-sm btn-danger" type="submit" style="width:100%">Очистить список</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endif %}
+
+<script>
+function tsTab(btn, tab) {
+  var tabs = btn.closest('.ts-div-tabs');
+  tabs.querySelectorAll('.ts-tab-btn').forEach(b => b.classList.remove('ts-tab-active'));
+  btn.classList.add('ts-tab-active');
+  tabs.querySelector('.ts-tab-emp').style.display = (tab === 'emp') ? '' : 'none';
+  tabs.querySelector('.ts-tab-proj').style.display = (tab === 'proj') ? '' : 'none';
+}
+</script>
+
+{% endblock %}
