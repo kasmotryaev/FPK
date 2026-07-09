@@ -7,7 +7,9 @@ from werkzeug.security import generate_password_hash
 
 DB_PATH = Path(__file__).parent / "data" / "fp_portal.db"
 
-TEAM_LEADS = ["Зинин Юра", "Денисова Мария", "Чибизов Георгий", "Фёдоров Роман", "Эркенов Руслан"]
+# Список руководителей команд задаётся через страницу «Пользователи» в интерфейсе.
+# Оставьте пустым — пользователей создаёт owner после первого входа.
+TEAM_LEADS = []
 OWNER_LABEL = "Руководитель продукта"
 ALL_RESPONSIBLE = [OWNER_LABEL] + TEAM_LEADS
 

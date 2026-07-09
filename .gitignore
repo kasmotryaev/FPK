@@ -4,6 +4,13 @@ bot/token.txt
 logs/
 fp_portal.db
 
+# ── Скрипты настройки (содержат личные токены и логины) ────────
+*.command
+Настроить_GitHub.command
+Опубликовать_на_GitHub.command
+Сохранить_на_GitHub.command
+~/.config/fp-portal/
+
 # ── macOS ──────────────────────────────────────────────────────
 .DS_Store
 **/.DS_Store
