@@ -2374,16 +2374,18 @@ def rows_list():
             cm = cli_map[cli]
             sections = [cm["sec_map"][s] for s in cm["sec_order"]]
             sections.sort(key=lambda s: -(s["amount_0100"] + s["amount_opp"] + s["fact_total"]))
-            plan = cm["amount_0100"] + cm["amount_opp"]
+            plan  = cm["amount_0100"] + cm["amount_opp"]
+            total = plan + cm["fact_total"]
             client_accordion.append({
-                "client":      cm["client"],
-                "amount_0100": cm["amount_0100"],
-                "amount_opp":  cm["amount_opp"],
-                "fact_total":  cm["fact_total"],
-                "plan_total":  plan,
-                "row_count":   cm["row_count"],
-                "max_risk":    cm["max_risk"],
-                "sections":    sections,
+                "client":        cm["client"],
+                "amount_0100":   cm["amount_0100"],
+                "amount_opp":    cm["amount_opp"],
+                "fact_total":    cm["fact_total"],
+                "plan_total":    plan,
+                "total_revenue": total,   # для шкалы бара: 0-100 + Возм. + Факт
+                "row_count":     cm["row_count"],
+                "max_risk":      cm["max_risk"],
+                "sections":      sections,
             })
         client_accordion.sort(key=lambda c: -(c["amount_0100"] + c["amount_opp"] + c["fact_total"]))
 

@@ -139,9 +139,12 @@
 
 {# ── Аккордеон по клиентам ── #}
 <div class="fp-accordion" id="fp-cli-accordion">
-  {% set ca_max = (client_accordion | map(attribute='plan_total') | list | max) if client_accordion else 1 %}
+  {# ca_max = total_revenue самого крупного клиента (0-100 + Возм. + Факт).
+     cli_pct строится по той же метрике → крупнейший = 100%, никто не превысит. #}
+  {% set ca_totals = client_accordion | map(attribute='total_revenue') | list %}
+  {% set ca_max = (ca_totals | max) if ca_totals else 1 %}
   {% for cli in client_accordion %}
-  {% set cli_pct = ((cli.amount_0100 + cli.amount_opp + cli.fact_total) / ca_max * 100 if ca_max else 0)|round(1) %}
+  {% set cli_pct = (cli.total_revenue / ca_max * 100 if ca_max else 0)|round(1) %}
   <details class="fp-sec-block fp-cli-block">
     <summary class="fp-cli-head">
       <span class="fp-cli-col-name">{{ cli.client }}</span>
