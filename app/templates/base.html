@@ -20,6 +20,7 @@
 
           <div class="nav-group-label">Финансовый план</div>
           <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint == 'dashboard' }}"><span class="nav-icon">📊</span>Дашборд</a>
+          <a href="{{ url_for('zd_dashboard') }}" class="{{ 'active' if request.endpoint == 'zd_dashboard' }}"><span class="nav-icon">🔧</span>Заказные доработки</a>
           <a href="{{ url_for('rows_list') }}" class="{{ 'active' if request.endpoint == 'rows_list' }}"><span class="nav-icon">📋</span>Детализация</a>
           <a href="{{ url_for('my_obligations') }}" class="{{ 'active' if request.endpoint == 'my_obligations' }}"><span class="nav-icon">✅</span>Мои обязательства</a>
           <a href="{{ url_for('archive_view') }}" class="{{ 'active' if request.endpoint == 'archive_view' }}"><span class="nav-icon">🗂</span>Архив кварталов</a>

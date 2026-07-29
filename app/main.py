@@ -1562,6 +1562,136 @@ def dashboard():
     )
 
 
+# ── Заказные доработки: отдельный срез дашборда ──────────────────────────────
+@app.route("/zd")
+@login_required
+def zd_dashboard():
+    ZD_SECTION = "Заказные доработки"
+    conn = get_conn()
+    vqls, _mode = get_view_context(conn)
+    ql_ph = ",".join("?" * len(vqls))
+    months, qnum, outlier_months = get_period_info(vqls, conn=conn)
+    m_ph = ",".join("?" * len(months)) if months else "''"
+
+    rows = conn.execute(f"""
+        SELECT * FROM fp_rows
+        WHERE is_active = 1 AND quarter_label IN ({ql_ph}) AND month IN ({m_ph})
+        AND section = ?
+    """, vqls + list(months) + [ZD_SECTION]).fetchall()
+    today = datetime.date.today()
+
+    filter_client = request.args.get("client", "")
+    filter_responsible = request.args.get("responsible", "")
+    clients_q = conn.execute(
+        f"SELECT DISTINCT client_name FROM fp_rows WHERE is_active=1 AND quarter_label IN ({ql_ph}) AND section = ? ORDER BY client_name",
+        vqls + [ZD_SECTION],
+    ).fetchall()
+    clients = [c["client_name"] for c in clients_q]
+
+    summary = {"Факт": 0.0, "0-100": 0.0, "Возможности": 0.0}
+    by_client = {}
+    risk_sums = {1: 0.0, 2: 0.0, 3: 0.0}
+    risk_counts = {1: 0, 2: 0, 3: 0}
+    for r in rows:
+        p = r["portfolio"] or "Прочее"
+        summary[p] = summary.get(p, 0.0) + (r["amount_0_100"] or 0)
+        cli = r["client_name"]
+        by_client.setdefault(cli, {"Факт": 0.0, "0-100": 0.0, "Возможности": 0.0})
+        by_client[cli][p] = by_client[cli].get(p, 0.0) + (r["amount_0_100"] or 0)
+        rl = r["risk_level"] or 0
+        if rl in risk_sums:
+            risk_sums[rl] += (r["amount_0_100"] or 0)
+            risk_counts[rl] += 1
+
+    by_client_sorted = dict(sorted(by_client.items()))
+    client_totals = {
+        "Факт": sum(v.get("Факт", 0) for v in by_client.values()),
+        "0-100": sum(v.get("0-100", 0) for v in by_client.values()),
+        "Возможности": sum(v.get("Возможности", 0) for v in by_client.values()),
+    }
+
+    # DPA — к получению в ближайшие N дней
+    dpa_window_start = today
+    dpa_window_end = today + datetime.timedelta(days=DPA_DUE_WINDOW_DAYS)
+    dpa_due_rows = conn.execute(f"""
+        SELECT * FROM fp_rows
+        WHERE is_active = 1 AND quarter_label IN ({ql_ph}) AND portfolio IN ('0-100', 'Возможности')
+        AND dpa_date IS NOT NULL AND dpa_date >= ? AND dpa_date <= ?
+        AND section = ?
+    """, vqls + [dpa_window_start.isoformat(), dpa_window_end.isoformat(), ZD_SECTION]).fetchall()
+    dpa_due_total = sum((r["amount_0_100"] or 0) for r in dpa_due_rows)
+    dpa_due_count_total = len(dpa_due_rows)
+
+    # DPA overdue
+    dpa_overdue_rows = conn.execute(f"""
+        SELECT * FROM fp_rows
+        WHERE is_active = 1 AND quarter_label IN ({ql_ph}) AND portfolio IN ('0-100', 'Возможности')
+        AND dpa_date IS NOT NULL AND dpa_date < ?
+        AND section = ?
+    """, vqls + [today.isoformat(), ZD_SECTION]).fetchall()
+    dpa_overdue_total = sum((r["amount_0_100"] or 0) for r in dpa_overdue_rows)
+    dpa_overdue_count_total = len(dpa_overdue_rows)
+
+    # Obligations
+    row_ids = [r["id"] for r in rows]
+    obligations_list = []
+    if row_ids:
+        ph = ",".join("?" * len(row_ids))
+        obligations_list = conn.execute(f"""
+            SELECT o.*, f.client_name, f.project_name, f.section, f.amount_0_100, f.portfolio, f.dpa_date
+            FROM obligations o JOIN fp_rows f ON f.id = o.fp_row_id
+            WHERE o.fp_row_id IN ({ph})
+        """, row_ids).fetchall()
+
+    overdue, due_soon = [], []
+    for o in obligations_list:
+        if filter_client and o["client_name"] != filter_client:
+            continue
+        if filter_responsible and o["responsible_name"] != filter_responsible:
+            continue
+        if o["status"] == "done":
+            continue
+        if o["due_date"]:
+            due = datetime.date.fromisoformat(o["due_date"])
+            if due < today:
+                overdue.append(o)
+            elif (due - today).days <= 3:
+                due_soon.append(o)
+
+    # Статьи без обязательства (ЗД требует team_lead)
+    risky_rows = conn.execute(f"""
+        SELECT f.* FROM fp_rows f
+        WHERE f.is_active = 1
+        AND f.quarter_label IN ({ql_ph})
+        AND f.month IN ({m_ph})
+        AND f.section = ?
+        AND NOT EXISTS (
+            SELECT 1 FROM obligations o WHERE o.fp_row_id = f.id AND o.responsible_type = 'team_lead'
+        )
+    """, vqls + list(months) + [ZD_SECTION]).fetchall()
+    if filter_client:
+        risky_rows = [r for r in risky_rows if r["client_name"] == filter_client]
+    risky_rows = [r for r in risky_rows if (r["amount_0_100"] or 0) >= 300000]
+
+    conn.close()
+    return render_template(
+        "zd.html",
+        summary=summary, by_client=by_client_sorted, client_totals=client_totals,
+        overdue=overdue, due_soon=due_soon,
+        risky_rows=risky_rows, qnum=qnum, months=months, outlier_months=outlier_months,
+        total_rows=len(rows),
+        clients=clients, filter_client=filter_client, filter_responsible=filter_responsible,
+        team_lead_sections=TEAM_LEAD_SECTIONS,
+        risk_sums=risk_sums, risk_counts=risk_counts, risk_levels=RISK_LEVELS,
+        dpa_due_rows=dpa_due_rows, dpa_due_total=dpa_due_total, dpa_due_count_total=dpa_due_count_total,
+        dpa_window_start=dpa_window_start.isoformat(), dpa_window_end=dpa_window_end.isoformat(),
+        dpa_due_window_days=DPA_DUE_WINDOW_DAYS,
+        dpa_overdue_rows=dpa_overdue_rows, dpa_overdue_total=dpa_overdue_total,
+        dpa_overdue_count_total=dpa_overdue_count_total,
+        today_iso=today.isoformat(),
+    )
+
+
 @app.route("/save-fact-correction", methods=["POST"])
 @login_required
 @owner_required

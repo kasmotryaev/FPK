@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+{% block title %}Заказные доработки — ФП‑Контроль{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Заказные доработки</h1>
+    <div class="subtitle">
+      Срез дашборда — только раздел «Заказные доработки» · {{ total_rows }} статей
+      {% if months %} · {{ months | join(', ') }}{% endif %}
+    </div>
+  </div>
+  <a href="{{ url_for('dashboard') }}" class="btn btn-sm">← Общий дашборд</a>
+</div>
+
+<div class="card section-block">
+  <div class="section-title">Деньги периода — Заказные доработки</div>
+  <div class="subtitle" style="margin-bottom:10px">Только статьи раздела «Заказные доработки» активного периода.</div>
+  <div class="grid-4">
+    <div class="card kpi-tile" style="background:var(--fact-bg); border-color:var(--ok)">
+      <div class="kpi-label" style="color:var(--ok)">Факт (получено)</div>
+      <div class="kpi-value" style="color:var(--ok)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=['Заказные доработки'], portfolio=['Факт']) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(summary.get('Факт',0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">по разделу ЗД</div>
+    </div>
+    <div class="card kpi-tile" style="background:var(--accent-bg); border-color:var(--accent)">
+      <div class="kpi-label" style="color:var(--accent)">Факт + План 0‑100</div>
+      <div class="kpi-value" style="color:var(--accent)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=['Заказные доработки'], portfolio=['Факт', '0-100']) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(summary.get('Факт',0) + summary.get('0-100',0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">получено + осталось по плану</div>
+    </div>
+    <div class="card kpi-tile" style="background:var(--accent-bg); border-color:var(--accent)">
+      <div class="kpi-label" style="color:var(--accent)">0‑100</div>
+      <div class="kpi-value" style="color:var(--accent)">
+        <a href="{{ url_for('rows_list', section=['Заказные доработки'], portfolio=['0-100']) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(summary.get('0-100',0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">осталось получить по плану</div>
+    </div>
+    <div class="card kpi-tile" style="background:var(--neutral-bg); border-color:var(--ink-300)">
+      <div class="kpi-label" style="color:var(--ink-500)">Возможности</div>
+      <div class="kpi-value" style="color:var(--ink-700)">
+        <a href="{{ url_for('rows_list', section=['Заказные доработки'], portfolio=['Возможности']) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(summary.get('Возможности',0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">незапланированные деньги при выполнении обязательств</div>
+    </div>
+  </div>
+</div>
+
+<div class="card section-block">
+  <div class="section-title">К получению в ближайшие {{ dpa_due_window_days }} дня (по дате ДПА)</div>
+  <div class="subtitle" style="margin-bottom:10px">Сумма 0‑100 и Возможности по активным статьям ЗД с датой ДПА с {{ dpa_window_start }} по {{ dpa_window_end }}.</div>
+  {% if dpa_due_count_total > 0 %}
+  <div class="grid-2">
+    <div class="card kpi-tile" style="background:var(--warn-bg); border-color:var(--warn)">
+      <div class="kpi-label" style="color:var(--warn)">Заказные доработки</div>
+      <div class="kpi-value" style="color:var(--warn)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=['Заказные доработки'], portfolio=['0-100', 'Возможности'], dpa_from=dpa_window_start, dpa_to=dpa_window_end) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(dpa_due_total).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">{{ dpa_due_count_total }} статей</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="empty-state" style="padding:20px"><div class="big">—</div>Нет статей с датой ДПА в ближайшие {{ dpa_due_window_days }} дня</div>
+  {% endif %}
+</div>
+
+{% if dpa_overdue_total > 0 %}
+<div class="card section-block" style="border-color:var(--danger)">
+  <div class="section-title" style="color:var(--danger)">⚠ Просроченные деньги ({{ dpa_overdue_count_total }} статей)</div>
+  <div class="subtitle" style="margin-bottom:10px">Статьи 0‑100 и Возможности ЗД с датой ДПА, которая уже прошла.</div>
+  <div class="grid-2">
+    <div class="card kpi-tile" style="background:var(--danger-bg,#fff5f5); border-color:var(--danger)">
+      <div class="kpi-label" style="color:var(--danger)">Заказные доработки</div>
+      <div class="kpi-value" style="color:var(--danger)">
+        <a href="{{ url_for('rows_list', view='detail', sort='dpa_date', dir='asc', section=['Заказные доработки'], portfolio=['0-100', 'Возможности'], dpa_to=today_iso) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(dpa_overdue_total).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">{{ dpa_overdue_count_total }} статей</div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="card section-block">
+  <div class="section-title">Сумма под риском (ручная отметка)</div>
+  <div class="subtitle" style="margin-bottom:10px">Сумма 0‑100 по статьям ЗД, на которых вручную выставлен уровень риска.</div>
+  <div class="grid-3">
+    <div class="card kpi-tile" style="background:var(--risk-low-bg); border-color:var(--risk-low)">
+      <div class="kpi-label" style="color:var(--risk-low)">Низкий риск</div>
+      <div class="kpi-value" style="color:var(--risk-low)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=['Заказные доработки'], risk_level=[1]) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(risk_sums.get(1,0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">{{ risk_counts.get(1,0) }} статей · вероятность ~{{ risk_levels[1].probability }}%</div>
+    </div>
+    <div class="card kpi-tile" style="background:var(--risk-medium-bg); border-color:var(--risk-medium)">
+      <div class="kpi-label" style="color:var(--risk-medium)">Средний риск</div>
+      <div class="kpi-value" style="color:var(--risk-medium)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=['Заказные доработки'], risk_level=[2]) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(risk_sums.get(2,0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">{{ risk_counts.get(2,0) }} статей · вероятность ~{{ risk_levels[2].probability }}%</div>
+    </div>
+    <div class="card kpi-tile" style="background:var(--risk-high-bg); border-color:var(--risk-high)">
+      <div class="kpi-label" style="color:var(--risk-high)">Высокий риск</div>
+      <div class="kpi-value" style="color:var(--risk-high)">
+        <a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=['Заказные доработки'], risk_level=[3]) }}" style="color:inherit; text-decoration:none;">{{ "{:,.0f}".format(risk_sums.get(3,0)).replace(',', ' ') }} ₽</a>
+      </div>
+      <div class="kpi-sub">{{ risk_counts.get(3,0) }} статей · вероятность ~{{ risk_levels[3].probability }}%</div>
+    </div>
+  </div>
+</div>
+
+<div class="grid-2 section-block">
+  <div class="card">
+    <div class="section-title">Просроченные обязательства ({{ overdue|length }})</div>
+    {% if overdue %}
+      {% for o in overdue %}
+        <div class="obl-item">
+          <div class="obl-item-head">
+            <span class="obl-title">{{ o.title }}</span>
+            <span class="tag tag-danger">просрочено: {{ o.due_date }}</span>
+          </div>
+          <div class="obl-meta">{{ o.client_name }} · {{ o.project_name }} · отв.: {{ o.responsible_name }}</div>
+          <div class="obl-meta"><a href="{{ url_for('rows_list', q=o.client_name, view='detail') }}#row-{{ o.fp_row_id }}">Открыть строку →</a></div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty-state"><div class="big">✓</div>Просрочек нет</div>
+    {% endif %}
+  </div>
+  <div class="card">
+    <div class="section-title">Горящие сроки, ≤3 дня ({{ due_soon|length }})</div>
+    {% if due_soon %}
+      {% for o in due_soon %}
+        <div class="obl-item">
+          <div class="obl-item-head">
+            <span class="obl-title">{{ o.title }}</span>
+            <span class="tag tag-warn">срок: {{ o.due_date }}</span>
+          </div>
+          <div class="obl-meta">{{ o.client_name }} · {{ o.project_name }} · отв.: {{ o.responsible_name }}</div>
+          <div class="obl-meta"><a href="{{ url_for('rows_list', q=o.client_name, view='detail') }}#row-{{ o.fp_row_id }}">Открыть строку →</a></div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="empty-state"><div class="big">—</div>Нет горящих сроков</div>
+    {% endif %}
+  </div>
+</div>
+
+<form class="filters card" method="GET" style="margin-bottom:20px">
+  <select name="client" onchange="this.form.submit()">
+    <option value="">Все клиенты</option>
+    {% for c in clients %}
+      <option value="{{ c }}" {{ 'selected' if filter_client == c }}>{{ c }}</option>
+    {% endfor %}
+  </select>
+  <select name="responsible" onchange="this.form.submit()">
+    <option value="">Все ответственные</option>
+    {% for name in all_responsible %}
+      <option value="{{ name }}" {{ 'selected' if filter_responsible == name }}>{{ name }}</option>
+    {% endfor %}
+  </select>
+  <span class="muted" style="font-size:12px">Фильтр влияет на просрочки/горящие сроки выше и на статьи без ответственного ниже</span>
+</form>
+
+<div class="card section-block">
+  <div class="section-title">Статьи без оформленного обязательства/ответственного ({{ risky_rows|length }})</div>
+  <div class="subtitle" style="margin-bottom:10px">«Заказные доработки» обязаны иметь обязательство за одним из руководителей команд. Показаны только статьи с суммой 0‑100 от 300 000 ₽.</div>
+  {% if risky_rows %}
+    <table>
+      <thead><tr><th>Клиент</th><th>Проект</th><th>Нужен ответственный</th><th>ДПА</th><th class="num">Сумма 0‑100</th><th></th></tr></thead>
+      <tbody>
+        <tr style="font-weight:700; background:var(--ink-100);">
+          <td colspan="4">Итого риск</td>
+          <td class="num">{{ "{:,.0f}".format(risky_rows | sum(attribute='amount_0_100')).replace(',', ' ') }} ₽</td>
+          <td></td>
+        </tr>
+        {% for r in risky_rows %}
+        <tr>
+          <td>{{ r.client_name }}</td>
+          <td>{{ r.project_name }}</td>
+          <td><span class="tag tag-danger">рук. команды</span></td>
+          <td>{{ r.dpa_date or '—' }}</td>
+          <td class="num">{{ "{:,.0f}".format(r.amount_0_100 or 0).replace(',', ' ') }} ₽</td>
+          <td style="white-space:nowrap">
+            <a href="{{ url_for('rows_list', q=r.client_name, view='detail', section=['Заказные доработки']) }}#row-{{ r.id }}" class="btn btn-sm">Открыть →</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="empty-state"><div class="big">✓</div>Все статьи ЗД закреплены за ответственными</div>
+  {% endif %}
+</div>
+
+<div class="card section-block">
+  <div class="section-title">Сводка по клиентам ({{ by_client|length }} клиентов)</div>
+  {% if by_client %}
+    <table>
+      <thead><tr><th>Клиент</th><th class="num">Факт</th><th class="num">0‑100</th><th class="num">Возможности</th><th class="num">Итого (план)</th></tr></thead>
+      <tbody>
+        <tr style="font-weight:700; background:var(--ink-100);">
+          <td>Итого</td>
+          <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=['Заказные доработки'], portfolio=['Факт']) }}">{{ "{:,.0f}".format(client_totals.get('Факт',0)).replace(',', ' ') }} ₽</a></td>
+          <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=['Заказные доработки'], portfolio=['0-100']) }}">{{ "{:,.0f}".format(client_totals.get('0-100',0)).replace(',', ' ') }} ₽</a></td>
+          <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=['Заказные доработки'], portfolio=['Возможности']) }}">{{ "{:,.0f}".format(client_totals.get('Возможности',0)).replace(',', ' ') }} ₽</a></td>
+          <td class="num">{{ "{:,.0f}".format(client_totals.get('0-100',0) + client_totals.get('Возможности',0)).replace(',', ' ') }} ₽</td>
+        </tr>
+        {% for client, vals in by_client.items() %}
+        <tr>
+          <td><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', section=['Заказные доработки'], client=[client]) }}">{{ client }}</a></td>
+          <td class="num">{{ "{:,.0f}".format(vals.get('Факт',0)).replace(',', ' ') }} ₽</td>
+          <td class="num">{{ "{:,.0f}".format(vals.get('0-100',0)).replace(',', ' ') }} ₽</td>
+          <td class="num">{{ "{:,.0f}".format(vals.get('Возможности',0)).replace(',', ' ') }} ₽</td>
+          <td class="num">{{ "{:,.0f}".format(vals.get('0-100',0) + vals.get('Возможности',0)).replace(',', ' ') }} ₽</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="empty-state"><div class="big">∅</div>Нет данных по ЗД за период</div>
+  {% endif %}
+</div>
+{% endblock %}
