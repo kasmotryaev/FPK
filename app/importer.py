@@ -4,12 +4,22 @@ import json
 from collections import defaultdict
 from app.db import get_conn, row_key, get_setting, set_setting, compute_quarter_label
 
-# Маппинг колонок исходного файла (заголовок -> индекс с 1) по заданной структуре
+# Обязательные колонки файла (проверяются по имени, не по позиции).
+# Новый формат файла (23 кол.) включает дополнительные столбцы относительно старого (20 кол.),
+# поэтому парсер использует поиск по имени заголовка, а не фиксированные индексы.
+REQUIRED_HEADERS = {
+    "Месяц", "ПЦ", "Раздел ФП", "Наименование клиента",
+    "Сумма по 0-100, руб",          # новый формат (без точки)
+    "Портфель",
+}
+
+# Список заголовков нового формата — для справки и документации
 EXPECTED_HEADERS = [
-    "Месяц", "ПЦ", "Раздел ФП", "Наименование клиента", "Номер проекта",
-    "Наименование проекта", "Менеджер проекта", "Номер договора", "Номер ЭЗ",
-    "СДЗ", "ДПА", "фДЗ", "Способ учета", "0-100 от МП", "Комментарий МП к СДЗ",
-    "Сумма из СRM, руб.", "Сумма по 0-100, руб.", "Примечание", "Портфель", "Колодец",
+    "Месяц", "Стратегическое решение", "ПЦ", "РП", "Раздел ФП",
+    "Наименование клиента", "Номер проекта", "Наименование проекта", "Менеджер проекта",
+    "Номер договора", "Номер ЭЗ", "СДЗ", "ДПА", "ФДЗ", "Способ учета",
+    "0-100 от МП", "Комментарий МП к СДЗ", "Сумма CRM, руб", "Сумма по 0-100, руб",
+    "Примечание", "Портфель", "Колодец", "Внешний ID клиента",
 ]
 
 # Поля, изменения которых стоит показывать пользователю в сводке загрузки
@@ -49,20 +59,48 @@ def _num(val):
         return 0.0
 
 
+def _build_col_map(ws):
+    """Строит маппинг «имя заголовка → номер столбца (1-based)» по первой строке файла."""
+    col_map = {}
+    for c in range(1, ws.max_column + 1):
+        hdr = ws.cell(row=1, column=c).value
+        if hdr is not None:
+            col_map[str(hdr).strip()] = c
+    return col_map
+
+
+def _get(ws, row, col_map, *names):
+    """Возвращает значение первой найденной колонки из списка имён (поддержка старых/новых названий)."""
+    for name in names:
+        c = col_map.get(name)
+        if c is not None:
+            return ws.cell(row=row, column=c).value
+    return None
+
+
 def detect_header_mismatch(ws):
-    actual = [ws.cell(row=1, column=c).value for c in range(1, len(EXPECTED_HEADERS) + 1)]
-    mismatches = []
-    for i, (exp, act) in enumerate(zip(EXPECTED_HEADERS, actual), start=1):
-        if (act or "").strip() != exp:
-            mismatches.append((i, exp, act))
-    return mismatches
+    """Проверяет наличие обязательных колонок по имени (не по позиции).
+    Возвращает список отсутствующих заголовков; пустой список — файл корректен."""
+    col_map = _build_col_map(ws)
+    # «Сумма по 0-100» может называться по-разному в старом и новом форматах
+    actual_names = set(col_map.keys())
+    missing = []
+    for req in REQUIRED_HEADERS:
+        # для суммы проверяем оба варианта написания
+        if req == "Сумма по 0-100, руб":
+            if "Сумма по 0-100, руб" not in actual_names and "Сумма по 0-100, руб." not in actual_names:
+                missing.append(req)
+        elif req not in actual_names:
+            missing.append(req)
+    return missing
 
 
-def import_excel(filepath, filename, user_id, quarter_label=None):
+def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None):
     wb = openpyxl.load_workbook(filepath, data_only=True)
     ws = wb[wb.sheetnames[0]]
 
     mismatches = detect_header_mismatch(ws)
+    col_map = _build_col_map(ws)
 
     conn = get_conn()
     cur = conn.cursor()
@@ -149,14 +187,77 @@ def import_excel(filepath, filename, user_id, quarter_label=None):
                 "obligations_copied": 0, "comments_copied": 0,
             }
 
+    # ---------- Предварительный снимок пользовательских данных текущего квартала ----------
+    # Если квартал уже существует (is_new_quarter=False), строки могут поменять row_key между
+    # загрузками (незначительное изменение ключевого поля в файле). Тогда старая строка
+    # деактивируется и создаётся новая — без комментариев/рисков/обязательств.
+    # Чтобы этого не происходило, делаем снимок по (project_num, section) ДО основного цикла.
+    same_q_user_data = {}  # (project_num, section) → {internal_comment, risk_level, ...}
+    if not is_new_quarter:
+        cur.execute("""
+            SELECT id, project_num, section, internal_comment, risk_level, responsible_user_id
+            FROM fp_rows
+            WHERE is_active = 1 AND quarter_label = ?
+        """, (upload_ql,))
+        _sq_rows = cur.fetchall()
+        _sq_ids = [r_["id"] for r_ in _sq_rows]
+        _sq_obls = defaultdict(list)
+        if _sq_ids:
+            _ph = ",".join("?" * len(_sq_ids))
+            cur.execute(f"SELECT * FROM obligations WHERE fp_row_id IN ({_ph})", _sq_ids)
+            for _o in cur.fetchall():
+                _sq_obls[_o["fp_row_id"]].append(_o)
+        for _r in _sq_rows:
+            pn = str(_r["project_num"] or "").strip()
+            sc = str(_r["section"] or "").strip()
+            if pn and sc:
+                same_q_user_data.setdefault(
+                    (pn, sc),
+                    {
+                        "internal_comment": _r["internal_comment"],
+                        "risk_level": _r["risk_level"],
+                        "responsible_user_id": _r["responsible_user_id"],
+                        "obligations": _sq_obls.get(_r["id"], []),
+                    },
+                )
+
     for r in range(2, ws.max_row + 1):
-        vals = [ws.cell(row=r, column=c).value for c in range(1, 21)]
-        if all(v is None or v == "" for v in vals):
+        # Читаем по именам заголовков — работает и со старым (20 кол.), и с новым (23 кол.) форматом
+        g = lambda *names: _get(ws, r, col_map, *names)
+
+        month        = g("Месяц")
+        pc           = g("ПЦ")
+        section      = g("Раздел ФП")
+        client       = g("Наименование клиента")
+        proj_num     = g("Номер проекта")
+        proj_name    = g("Наименование проекта")
+        manager      = g("Менеджер проекта")
+        contract     = g("Номер договора")
+        ez           = g("Номер ЭЗ")
+        sdz          = g("СДЗ")
+        dpa          = g("ДПА")
+        fdz          = g("ФДЗ", "фДЗ")           # оба регистра
+        accounting   = g("Способ учета")
+        mp_0_100     = g("0-100 от МП")
+        mp_comment   = g("Комментарий МП к СДЗ")
+        crm_amount   = g("Сумма CRM, руб", "Сумма из СRM, руб.")  # старый и новый варианты
+        amount_0_100 = g("Сумма по 0-100, руб", "Сумма по 0-100, руб.")
+        note         = g("Примечание")
+        portfolio    = g("Портфель")
+        kolodec      = g("Колодец")
+        # Новые колонки (пока не используются в БД, но не вызывают ошибок)
+        # g("Стратегическое решение"), g("РП"), g("Внешний ID клиента")
+
+        if all(v is None or v == "" for v in (month, client, proj_num, section, amount_0_100, portfolio)):
             continue
 
-        (month, pc, section, client, proj_num, proj_name, manager, contract,
-         ez, sdz, dpa, fdz, accounting, mp_0_100, mp_comment, crm_amount,
-         amount_0_100, note, portfolio, kolodec) = vals
+        # Фильтр по РП из колонки «РП» нового формата файла.
+        # Если фильтр задан и колонка присутствует — пропускаем строки других РП.
+        # Если колонки «РП» нет в файле (старый формат) — фильтр не применяется.
+        if rp_filter and "РП" in col_map:
+            row_rp = g("РП")
+            if row_rp is None or str(row_rp).strip() != rp_filter:
+                continue
 
         base_key_tuple = (month, client, proj_num, section, contract, ez, portfolio, accounting)
         occurrence = occurrence_counter[base_key_tuple]
@@ -305,6 +406,39 @@ def import_excel(filepath, filename, user_id, quarter_label=None):
                               o["responsible_name"], o["due_date"], o["status"], o["created_by"],
                               o["completed_at"]))
                         rollover_summary["obligations_copied"] += 1
+
+            # Повторная загрузка в рамках ТОГО ЖЕ квартала: строка оказалась новой (row_key
+            # не совпал, т.к. ключевое поле немного изменилось в файле). Ищем по
+            # (project_num, section) в снимке, сделанном до начала импорта, и переносим
+            # пользовательские данные — чтобы комментарии/риски/обязательства не терялись.
+            elif not is_new_quarter and same_q_user_data and proj_num and section:
+                sq_key = (str(proj_num).strip(), str(section).strip())
+                sq_carried = same_q_user_data.pop(sq_key, None)
+                if sq_carried:
+                    sq_clauses = []
+                    sq_params = {"id": new_id}
+                    if sq_carried["internal_comment"]:
+                        sq_clauses.append("internal_comment = :internal_comment")
+                        sq_params["internal_comment"] = sq_carried["internal_comment"]
+                    if sq_carried["risk_level"] is not None:
+                        sq_clauses.append("risk_level = :risk_level")
+                        sq_params["risk_level"] = sq_carried["risk_level"]
+                    if sq_carried["responsible_user_id"] is not None:
+                        sq_clauses.append("responsible_user_id = :responsible_user_id")
+                        sq_params["responsible_user_id"] = sq_carried["responsible_user_id"]
+                    if sq_clauses:
+                        cur.execute(
+                            f"UPDATE fp_rows SET {', '.join(sq_clauses)} WHERE id = :id",
+                            sq_params,
+                        )
+                    for o in sq_carried["obligations"]:
+                        cur.execute("""
+                            INSERT INTO obligations (fp_row_id, title, description, responsible_type,
+                                responsible_name, due_date, status, created_by, completed_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (new_id, o["title"], o["description"], o["responsible_type"],
+                              o["responsible_name"], o["due_date"], o["status"], o["created_by"],
+                              o["completed_at"]))
 
     # Строки, которые были раньше, но не встретились в новой загрузке -> деактивируем (не удаляем,
     # чтобы не потерять привязанные обязательства).

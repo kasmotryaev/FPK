@@ -1,10 +1,13 @@
 import os
 import re
+import glob
+import shutil
 import datetime
 import json
 import tempfile
 import urllib.request
 import urllib.error
+import urllib.parse
 from pathlib import Path
 from functools import wraps
 from collections import Counter
@@ -1230,6 +1233,18 @@ def owner_required(f):
     return wrapper
 
 
+def _get_portal_users(conn):
+    """Возвращает (all_names, tl_names, name_to_role) из таблицы users.
+    Используется вместо захардкоженных TEAM_LEADS / ALL_RESPONSIBLE."""
+    rows = conn.execute(
+        "SELECT full_name, role FROM users WHERE role IN ('owner','team_lead') ORDER BY role DESC, full_name"
+    ).fetchall()
+    all_names = [r["full_name"] for r in rows]
+    tl_names = [r["full_name"] for r in rows if r["role"] == "team_lead"]
+    name_to_role = {r["full_name"]: r["role"] for r in rows}
+    return all_names, tl_names, name_to_role
+
+
 def can_edit_obligation(obligation_row):
     role = session.get("role")
     if role == "owner":
@@ -1247,6 +1262,8 @@ def inject_user():
     view_quarter = None
     view_mode = "quarter"
     view_fy = ""
+    _all_resp = [OWNER_LABEL]
+    _tl_names = []
     if session.get("user_id"):
         conn = get_conn()
         if session.get("role") == "owner":
@@ -1261,6 +1278,7 @@ def inject_user():
         vqls, view_mode = get_view_context(conn)
         view_quarter = vqls[0] if vqls else None
         view_fy = session.get("view_fy", "")
+        _all_resp, _tl_names, _ = _get_portal_users(conn)
         conn.close()
     fin_labels = {q["label"] for q in available_quarters if q["is_finalized"]}
 
@@ -1276,8 +1294,8 @@ def inject_user():
     return dict(
         current_user_name=session.get("full_name"),
         current_user_role=session.get("role"),
-        team_leads=TEAM_LEADS,
-        all_responsible=ALL_RESPONSIBLE,
+        team_leads=_tl_names,
+        all_responsible=_all_resp,
         pending_changes=pending_changes,
         pending_changes_total=sum(pending_changes.values()),
         asset_version=ASSET_VERSION,
@@ -1412,6 +1430,24 @@ def dashboard():
     dpa_due_count_total = sum(dpa_due_counts.values())
     dpa_due_all_sections = [s for _, secs in DPA_DUE_CATEGORIES for s in secs]
 
+    # «Просроченные деньги» — 0-100/Возможности, у которых дата ДПА уже прошла
+    dpa_overdue_rows = conn.execute(f"""
+        SELECT * FROM fp_rows
+        WHERE is_active = 1 AND quarter_label IN ({ql_ph}) AND portfolio IN ('0-100', 'Возможности')
+        AND dpa_date IS NOT NULL AND dpa_date < ?
+    """, vqls + [today.isoformat()]).fetchall()
+
+    dpa_overdue_by_category = {label: 0.0 for label, _ in DPA_DUE_CATEGORIES}
+    dpa_overdue_counts = {label: 0 for label, _ in DPA_DUE_CATEGORIES}
+    for r in dpa_overdue_rows:
+        cat_label = dpa_section_to_category.get(r["section"])
+        if cat_label is None:
+            continue
+        dpa_overdue_by_category[cat_label] += (r["amount_0_100"] or 0)
+        dpa_overdue_counts[cat_label] += 1
+    dpa_overdue_total = sum(dpa_overdue_by_category.values())
+    dpa_overdue_count_total = sum(dpa_overdue_counts.values())
+
     row_ids = [r["id"] for r in rows]
     obligations = []
     if row_ids:
@@ -1520,6 +1556,9 @@ def dashboard():
         dpa_due_counts=dpa_due_counts, dpa_due_total=dpa_due_total, dpa_due_count_total=dpa_due_count_total,
         dpa_due_all_sections=dpa_due_all_sections, dpa_window_start=dpa_window_start.isoformat(),
         dpa_window_end=dpa_window_end.isoformat(), dpa_due_window_days=DPA_DUE_WINDOW_DAYS,
+        dpa_overdue_by_category=dpa_overdue_by_category, dpa_overdue_counts=dpa_overdue_counts,
+        dpa_overdue_total=dpa_overdue_total, dpa_overdue_count_total=dpa_overdue_count_total,
+        today_iso=today.isoformat(),
     )
 
 
@@ -1669,8 +1708,10 @@ def import_view():
         path = UPLOAD_DIR / fname
         file.save(path)
         try:
+            _c = get_conn(); _fp_rp = get_setting(_c, "fp_rp_filter") or None; _c.close()
             result = import_excel(str(path), fname, session["user_id"],
-                                  quarter_label=upload_quarter or None)
+                                  quarter_label=upload_quarter or None,
+                                  rp_filter=_fp_rp or None)
         except Exception as e:
             flash(f"Ошибка импорта: {e}", "error")
             return redirect(url_for("import_view"))
@@ -1715,8 +1756,15 @@ def import_view():
     current_q = get_setting(conn, "current_quarter_label") or compute_quarter_label(datetime.date.today())
     next_q = next_quarter_label(current_q)
     q_options = quarter_options(current_q)
+    fp_rp_filter  = get_setting(conn, "fp_rp_filter") or ""
     ts_rp_filter = get_setting(conn, "ts_rp_filter") or ""
     ts_pc_filter = get_setting(conn, "ts_pc_filter") or ""
+    smb_server    = get_setting(conn, "smb_server") or ""
+    smb_share     = get_setting(conn, "smb_share") or ""
+    smb_subfolder = get_setting(conn, "smb_subfolder") or ""
+    smb_username  = get_setting(conn, "smb_username") or ""
+    smb_has_password = bool(get_setting(conn, "smb_password"))
+    smb_filename  = get_setting(conn, "smb_filename") or ""
     conn.close()
     return render_template(
         "import.html",
@@ -1726,6 +1774,10 @@ def import_view():
         quarter_option_list=q_options,
         ts_rp_filter=ts_rp_filter,
         ts_pc_filter=ts_pc_filter,
+        fp_rp_filter=fp_rp_filter,
+        smb_server=smb_server, smb_share=smb_share, smb_subfolder=smb_subfolder,
+        smb_username=smb_username, smb_has_password=smb_has_password,
+        smb_filename=smb_filename,
     )
 
 
@@ -1744,6 +1796,159 @@ def import_diff(log_id):
     except (json.JSONDecodeError, TypeError):
         diff = {}
     return render_template("import_diff.html", log=log, diff=diff)
+
+
+@app.route("/import/fp-rp-filter", methods=["POST"])
+@login_required
+@owner_required
+def fp_rp_filter_save():
+    """Сохраняет фильтр РП для импорта финансового плана."""
+    val = (request.form.get("fp_rp_filter") or "").strip()
+    conn = get_conn()
+    set_setting(conn, "fp_rp_filter", val)
+    conn.commit()
+    conn.close()
+    if val:
+        flash(f"Фильтр ФП по РП установлен: «{val}». Будут загружены только строки с этим РП.", "success")
+    else:
+        flash("Фильтр ФП по РП снят — загружаются все строки.", "success")
+    return redirect(url_for("import_view"))
+
+
+@app.route("/import/smb-settings", methods=["POST"])
+@login_required
+@owner_required
+def smb_settings_save():
+    """Сохраняет параметры подключения к SMB-шаре в app_settings."""
+    conn = get_conn()
+    for key in ("smb_server", "smb_share", "smb_subfolder", "smb_username", "smb_filename"):
+        set_setting(conn, key, (request.form.get(key) or "").strip())
+    # Пароль не перезаписываем, если поле оставлено пустым
+    pwd = (request.form.get("smb_password") or "").strip()
+    if pwd:
+        set_setting(conn, "smb_password", pwd)
+    conn.commit()
+    conn.close()
+    flash("Параметры сетевой папки сохранены.", "success")
+    return redirect(url_for("import_view"))
+
+
+@app.route("/import/smb-fetch", methods=["POST"])
+@login_required
+@owner_required
+def smb_fetch():
+    """Монтирует SMB-шару через mount_smbfs (macOS), копирует последний .xlsx и
+    импортирует его так же, как при ручной загрузке через форму /import."""
+    import subprocess as _sp
+
+    conn = get_conn()
+    smb_server    = get_setting(conn, "smb_server") or ""
+    smb_share     = get_setting(conn, "smb_share") or ""
+    smb_subfolder = get_setting(conn, "smb_subfolder") or ""
+    smb_username  = get_setting(conn, "smb_username") or ""
+    smb_password  = get_setting(conn, "smb_password") or ""
+    smb_filename  = get_setting(conn, "smb_filename") or ""
+    fp_rp_filter_smb = get_setting(conn, "fp_rp_filter") or None
+    upload_quarter = get_setting(conn, "current_quarter_label") or ""
+    conn.close()
+
+    if not smb_server or not smb_share or not smb_username:
+        flash("Укажите сервер, шару и логин в настройках сетевой папки.", "error")
+        return redirect(url_for("import_view"))
+
+    # mount_smbfs URL: //[DOMAIN;]user:password@server/share
+    # Разделитель домена и пользователя — «;», а не «\» (как в Windows-нотации).
+    # Все компоненты кроме сервера percent-кодируются, чтобы спецсимволы не ломали URL.
+    if "\\" in smb_username:
+        domain, user = smb_username.split("\\", 1)
+        safe_user = urllib.parse.quote(domain, safe="") + ";" + urllib.parse.quote(user, safe="")
+    else:
+        safe_user = urllib.parse.quote(smb_username, safe="")
+    safe_pwd   = urllib.parse.quote(smb_password, safe="")
+    safe_share = urllib.parse.quote(smb_share, safe="")
+    smb_url    = f"//{safe_user}:{safe_pwd}@{smb_server}/{safe_share}"
+
+    mnt = tempfile.mkdtemp(prefix="fp_smb_")
+    mounted = False
+    dest = None
+    try:
+        res = _sp.run(["mount_smbfs", smb_url, mnt],
+                      capture_output=True, text=True, timeout=20)
+        if res.returncode != 0:
+            err = (res.stderr or res.stdout or "неизвестная ошибка").strip()
+            flash(f"Не удалось подключиться к шаре: {err}", "error")
+            return redirect(url_for("import_view"))
+        mounted = True
+
+        search_dir = os.path.join(mnt, smb_subfolder) if smb_subfolder else mnt
+
+        if smb_filename:
+            src = os.path.join(search_dir, smb_filename)
+            if not os.path.exists(src):
+                flash(f"Файл «{smb_filename}» не найден в {smb_subfolder or '/'}.", "error")
+                return redirect(url_for("import_view"))
+        else:
+            xlsx_files = glob.glob(os.path.join(search_dir, "*.xlsx"))
+            if not xlsx_files:
+                flash("В сетевой папке не найдено файлов .xlsx.", "error")
+                return redirect(url_for("import_view"))
+            src = max(xlsx_files, key=os.path.getmtime)
+
+        fname = os.path.basename(src)
+        dest  = UPLOAD_DIR / secure_filename(fname)
+        shutil.copy2(src, dest)
+
+    except _sp.TimeoutExpired:
+        flash("Таймаут при подключении к сетевой папке. Проверьте доступность сервера.", "error")
+        return redirect(url_for("import_view"))
+    except Exception as e:
+        flash(f"Ошибка при работе с сетевой папкой: {e}", "error")
+        return redirect(url_for("import_view"))
+    finally:
+        if mounted:
+            try:
+                _sp.run(["umount", mnt], capture_output=True, timeout=10)
+            except Exception:
+                pass
+        try:
+            os.rmdir(mnt)
+        except Exception:
+            pass
+
+    if dest is None:
+        return redirect(url_for("import_view"))
+
+    # Импортируем полученный файл
+    try:
+        result = import_excel(str(dest), fname, session["user_id"],
+                              quarter_label=upload_quarter or None,
+                              rp_filter=fp_rp_filter_smb or None)
+    except Exception as e:
+        flash(f"Файл получен ({fname}), но ошибка при импорте: {e}", "error")
+        return redirect(url_for("import_view"))
+
+    effective_quarter = result.get("quarter_label", upload_quarter)
+    if effective_quarter:
+        session["view_quarter"] = effective_quarter
+
+    msg = (f"Файл «{fname}» получен с сетевой папки и импортирован"
+           f" ({effective_quarter or '?'}): "
+           f"всего {result['rows_total']}, новых {result['rows_new']}, "
+           f"изменено {result['rows_updated']}, без изменений {result['rows_unchanged']}, "
+           f"деактивировано {result['rows_deactivated']}")
+    if result["header_mismatches"]:
+        msg += f". Несовпадение заголовков: {result['header_mismatches']}"
+    flash(msg, "success" if not result["header_mismatches"] else "warning")
+
+    ro = result.get("rollover")
+    if ro:
+        flash(
+            f"Первая загрузка {ro['new_label']}: перенос из {ro['old_label']} завершён. "
+            f"По {ro['matched']} из {ro['candidates']} статей перенесены обязательства "
+            f"({ro['obligations_copied']}) и примечания ({ro['comments_copied']}).",
+            "success",
+        )
+    return redirect(url_for("import_view", last=1))
 
 
 @app.route("/set-quarter-view", methods=["POST"])
@@ -2384,15 +2589,16 @@ def add_obligation(row_id):
         conn.close()
         return _fail("Выберите ответственного")
 
-    if row["section"] in TEAM_LEAD_SECTIONS and responsible_name not in TEAM_LEADS:
+    _all_names, _tl_names_route, _name_to_role = _get_portal_users(conn)
+    if row["section"] in TEAM_LEAD_SECTIONS and responsible_name not in _tl_names_route:
         conn.close()
         return _fail("Для проектных статей выберите одного из руководителей команд")
 
-    if responsible_name not in ALL_RESPONSIBLE:
+    if responsible_name not in _all_names:
         conn.close()
         return _fail("Выберите ответственного из списка")
 
-    responsible_type = "owner" if responsible_name == OWNER_LABEL else "team_lead"
+    responsible_type = "owner" if _name_to_role.get(responsible_name) == "owner" else "team_lead"
 
     conn.execute("""
         INSERT INTO obligations (fp_row_id, title, description, responsible_type, responsible_name, due_date, created_by)
@@ -2426,14 +2632,15 @@ def reassign_obligation(obl_id):
         return redirect(url_for("rows_list"))
 
     new_name = request.form.get("responsible_name", "").strip()
-    if new_name not in ALL_RESPONSIBLE:
+    _all_names_r, _, _name_to_role_r = _get_portal_users(conn)
+    if new_name not in _all_names_r:
         conn.close()
         if is_fetch:
             return jsonify({"error": "Выберите ответственного из списка"}), 400
         flash("Выберите ответственного из списка", "error")
         return redirect(url_for("rows_list", _anchor=f"row-{obl['fp_row_id']}", view="detail"))
 
-    new_type = "owner" if new_name == OWNER_LABEL else "team_lead"
+    new_type = "owner" if _name_to_role_r.get(new_name) == "owner" else "team_lead"
 
     conn.execute(
         "UPDATE obligations SET responsible_name = ?, responsible_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",

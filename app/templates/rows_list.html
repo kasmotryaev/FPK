@@ -229,10 +229,10 @@
               <td class="agg-ctrl-comment">
                 <div class="agg-comment-wrap">
                   <details class="agg-comment-pop" id="cmnt-{{ r.id }}">
-                    <summary class="agg-comment-btn {{ 'has-comment' if r.comment }}" title="Редактировать комментарий">✎</summary>
+                    <summary class="agg-comment-btn {{ 'has-comment' if r.internal_comment }}" title="Редактировать комментарий">✎</summary>
                     <div class="agg-comment-body">
                       <form onsubmit="agjComment(event, {{ r.id }}, this)">
-                        <textarea name="comment" rows="3" placeholder="Комментарий…">{{ r.comment or '' }}</textarea>
+                        <textarea name="comment" rows="3" placeholder="Комментарий…">{{ r.internal_comment or '' }}</textarea>
                         <div class="agg-comment-foot">
                           <button type="submit" class="btn btn-sm btn-primary">Сохранить</button>
                           <button type="button" class="btn btn-sm" onclick="document.getElementById('cmnt-{{ r.id }}').removeAttribute('open')">✕</button>
@@ -240,7 +240,7 @@
                       </form>
                     </div>
                   </details>
-                  <span class="agg-comment-text" id="cmnt-txt-{{ r.id }}">{{ r.comment or '' }}</span>
+                  <span class="agg-comment-text" id="cmnt-txt-{{ r.id }}">{{ r.internal_comment or '' }}</span>
                 </div>
               </td>
               {# ── obligations count badge ── #}

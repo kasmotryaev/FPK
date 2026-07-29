@@ -41,6 +41,79 @@
 
 {% if current_user_role == 'owner' %}
 <div class="card section-block" style="max-width:560px">
+  <div class="section-title">Финансовый план — загрузить с сетевой папки</div>
+  <div class="obl-meta" style="margin-bottom:12px">
+    Автоматически забирает последний .xlsx из сетевой папки Windows (SMB) и сразу импортирует его.
+    Квартал — текущий активный.
+  </div>
+  <details {% if not smb_server %}open{% endif %} style="margin-bottom:10px">
+    <summary style="cursor:pointer; font-size:12.5px; color:var(--ink-500); font-weight:600; text-transform:uppercase; letter-spacing:.05em; user-select:none">
+      ⚙ Параметры подключения
+    </summary>
+    <form method="POST" action="{{ url_for('smb_settings_save') }}" style="margin-top:10px">
+      <div class="form-group">
+        <label>Сервер</label>
+        <input type="text" name="smb_server" value="{{ smb_server }}" placeholder="ditest" style="min-width:220px">
+      </div>
+      <div class="form-group">
+        <label>Сетевая папка (share)</label>
+        <input type="text" name="smb_share" value="{{ smb_share }}" placeholder="SituationCenter" style="min-width:220px">
+      </div>
+      <div class="form-group">
+        <label>Подпапка внутри шары</label>
+        <input type="text" name="smb_subfolder" value="{{ smb_subfolder }}" placeholder="CB" style="min-width:220px">
+      </div>
+      <div class="form-group">
+        <label>Логин (DOMAIN\user или просто user)</label>
+        <input type="text" name="smb_username" value="{{ smb_username }}" placeholder="DIASOFT\ivanov" style="min-width:240px">
+      </div>
+      <div class="form-group">
+        <label>Пароль{% if smb_has_password %} <span class="muted">(уже сохранён — оставьте пустым, чтобы не менять)</span>{% endif %}</label>
+        <input type="password" name="smb_password" placeholder="{{ '••••••••' if smb_has_password else 'введите пароль' }}" style="min-width:220px">
+      </div>
+      <div class="form-group">
+        <label>Имя файла <span class="muted">(пустое поле — берётся последний .xlsx)</span></label>
+        <input type="text" name="smb_filename" value="{{ smb_filename }}" placeholder="report.xlsx" style="min-width:240px">
+      </div>
+      <button class="btn" type="submit">Сохранить параметры</button>
+    </form>
+  </details>
+  {% if smb_server and smb_username %}
+  <div class="obl-meta" style="margin-bottom:8px">
+    \\{{ smb_server }}\{{ smb_share }}{% if smb_subfolder %}\{{ smb_subfolder }}{% endif %}
+    · пользователь: <strong>{{ smb_username }}</strong>
+    · файл: <strong>{{ smb_filename or 'последний .xlsx' }}</strong>
+  </div>
+  <form method="POST" action="{{ url_for('smb_fetch') }}"
+        onsubmit="return confirm('Подключиться к \\\\{{ smb_server }}\\{{ smb_share }} и забрать файл?\n\nБудет запущен импорт за текущий квартал.')">
+    <button class="btn btn-primary" type="submit">⬇ Забрать с сервера и импортировать</button>
+  </form>
+  {% else %}
+  <div class="obl-meta" style="color:var(--ink-400)">Сначала укажите параметры подключения выше.</div>
+  {% endif %}
+</div>
+
+<div class="card section-block" style="max-width:560px">
+  <div class="section-title">Финансовый план — фильтр по РП</div>
+  <div class="obl-meta" style="margin-bottom:12px">
+    Применяется при каждой загрузке ФП (вручную и с сетевой папки). Оставьте пустым — будут загружены все строки.
+    {% if fp_rp_filter %}
+    <br>Сейчас: <strong>{{ fp_rp_filter }}</strong>
+    {% else %}
+    <br><span style="color:var(--warn)">⚠ Фильтр не задан — загружаются все строки файла</span>
+    {% endif %}
+  </div>
+  <form method="POST" action="{{ url_for('fp_rp_filter_save') }}">
+    <div class="form-group">
+      <label>РП (точное совпадение с колонкой «РП» в файле)</label>
+      <input type="text" name="fp_rp_filter" value="{{ fp_rp_filter }}"
+             placeholder="напр. Смотряев К.А." style="min-width:260px">
+    </div>
+    <button class="btn btn-primary" type="submit">Сохранить</button>
+  </form>
+</div>
+
+<div class="card section-block" style="max-width:560px">
   <div class="section-title">Трудозатраты — настройки фильтра</div>
   <div class="obl-meta" style="margin-bottom:12px">
     Применяются при каждой новой загрузке файла трудозатрат. Оставьте поле пустым — будут загружены все строки.
