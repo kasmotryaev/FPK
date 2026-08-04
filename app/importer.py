@@ -364,6 +364,15 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
                     :portfolio, :kolodec, 1, :quarter_label)
             """, data)
             new_id = cur.lastrowid
+            # Автозаполнение комментария из полей файла МП, если пользователь ещё не добавил своё.
+            # Объединяем «Комментарий МП к СДЗ» и «Примечание» через разделитель.
+            _auto_parts = [p for p in (str(mp_comment or "").strip(), str(note or "").strip()) if p]
+            if _auto_parts:
+                _auto_comment = " · ".join(_auto_parts)
+                cur.execute(
+                    "UPDATE fp_rows SET internal_comment = ? WHERE id = ? AND (internal_comment IS NULL OR internal_comment = '')",
+                    (_auto_comment, new_id),
+                )
             rows_new += 1
             diff_new.append({
                 "client": client, "project": proj_name, "section": section,

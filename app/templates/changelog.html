@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% block title %}Что нового — ФП‑Контроль{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Что нового</h1>
+    <div class="subtitle">История обновлений портала ФП‑Контроль</div>
+  </div>
+</div>
+
+<div class="changelog-wrap">
+
+  {# ── v1.6 ── #}
+  <div class="cl-version">
+    <div class="cl-version-head">
+      <span class="cl-badge">v1.6</span>
+      <span class="cl-date">Август 2026</span>
+      <span class="cl-tag cl-tag-hot">Актуальная</span>
+    </div>
+    <div class="cl-items">
+      <div class="cl-item">
+        <span class="cl-icon">🌙</span>
+        <div>
+          <div class="cl-item-title">Тёмная тема</div>
+          <div class="cl-item-desc">Кнопка переключения темы рядом с масштабом в боковой панели. Настройка сохраняется между сессиями.</div>
+        </div>
+      </div>
+      <div class="cl-item">
+        <span class="cl-icon">🔧</span>
+        <div>
+          <div class="cl-item-title">Страница «Заказные доработки»</div>
+          <div class="cl-item-desc">Отдельный срез дашборда только по разделу ЗД — факт, 0‑100, возможности, риски, ДПА, обязательства.</div>
+        </div>
+      </div>
+      <div class="cl-item">
+        <span class="cl-icon">📋</span>
+        <div>
+          <div class="cl-item-title">Группировка и сортировка в Изменениях</div>
+          <div class="cl-item-desc">События сгруппированы по разделу, добавлена сортировка по сумме и фильтр по разделу с пресетом «Управляемые».</div>
+        </div>
+      </div>
+      <div class="cl-item">
+        <span class="cl-icon">💬</span>
+        <div>
+          <div class="cl-item-title">Авто-заполнение комментария при импорте</div>
+          <div class="cl-item-desc">Поля «Комментарий МП к СДЗ» и «Примечание» из загружаемого файла автоматически попадают в поле «Комментарий» для новых строк, если оно ещё не заполнено.</div>
+        </div>
+      </div>
+      <div class="cl-item">
+        <span class="cl-icon">📜</span>
+        <div>
+          <div class="cl-item-title">История версий (эта страница)</div>
+          <div class="cl-item-desc">Страница с историей обновлений портала — доступна всем пользователям через кнопку «Что нового» в боковой панели.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── v1.5 ── #}
+  <div class="cl-version">
+    <div class="cl-version-head">
+      <span class="cl-badge cl-badge-prev">v1.5</span>
+      <span class="cl-date">Июль 2026</span>
+    </div>
+    <div class="cl-items">
+      <div class="cl-item">
+        <span class="cl-icon">⏱</span>
+        <div>
+          <div class="cl-item-title">Раздел «Трудозатраты»</div>
+          <div class="cl-item-desc">Загрузка отчётов ТЗ, иерархия по отделам и сотрудникам, сравнение периодов, поиск по сотруднику.</div>
+        </div>
+      </div>
+      <div class="cl-item">
+        <span class="cl-icon">⚖️</span>
+        <div>
+          <div class="cl-item-title">Расходы vs Доходы</div>
+          <div class="cl-item-desc">Сравнение ТЗ сотрудников с доходами по ФП (Факт, 0‑100, Возможности). Ставка ₽/день, агрегация по клиентам.</div>
+        </div>
+      </div>
+      <div class="cl-item">
+        <span class="cl-icon">📈</span>
+        <div>
+          <div class="cl-item-title">Аналитика трудозатрат и сравнение периодов</div>
+          <div class="cl-item-desc">Страницы для анализа динамики ТЗ по сотрудникам и отделам между загрузками.</div>
+        </div>
+      </div>
+      <div class="cl-item">
+        <span class="cl-icon">🐳</span>
+        <div>
+          <div class="cl-item-title">Docker-контейнеризация и публикация в GitLab</div>
+          <div class="cl-item-desc">Dockerfile, docker-compose, .gitignore, скрипт автопуша, инструкция развёртывания на Windows.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── v1.4 ── #}
+  <div class="cl-version">
+    <div class="cl-version-head">
+      <span class="cl-badge cl-badge-prev">v1.4</span>
+      <span class="cl-date">Июнь 2026</span>
+    </div>
+    <div class="cl-items">
+      <div class="cl-item">
+        <span class="cl-icon">🔔</span>
+        <div>
+          <div class="cl-item-title">Страница «Изменения»</div>
+          <div class="cl-item-desc">Очередь событий по строкам ФП — новые, обнулённые, пропавшие, изменения суммы. Отметка «Просмотрено».</div>
+        </div>
+      </div>
+      <div class="cl-item">
+        <span class="cl-icon">⚙️</span>
+        <div>
+          <div class="cl-item-title">Настройки квартала и фиксация</div>
+          <div class="cl-item-desc">Выбор отображаемого квартала/финансового года через боковую панель. Фиксация квартала с архивированием.</div>
+        </div>
+      </div>
+      <div class="cl-item">
+        <span class="cl-icon">🗂</span>
+        <div>
+          <div class="cl-item-title">Архив кварталов</div>
+          <div class="cl-item-desc">Страница с историей завершённых кварталов и сводкой при переходе.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── v1.3 ── #}
+  <div class="cl-version">
+    <div class="cl-version-head">
+      <span class="cl-badge cl-badge-prev">v1.3</span>
+      <span class="cl-date">Май 2026</span>
+    </div>
+    <div class="cl-items">
+      <div class="cl-item">
+        <span class="cl-icon">✅</span>
+        <div>
+          <div class="cl-item-title">Мои обязательства</div>
+          <div class="cl-item-desc">Персональная страница с обязательствами пользователя — просроченные, предстоящие.</div>
+        </div>
+      </div>
+      <div class="cl-item">
+        <span class="cl-icon">📅</span>
+        <div>
+          <div class="cl-item-title">ДПА-трекинг</div>
+          <div class="cl-item-desc">Блоки «Ожидается в ближайшие 4 дня» и «Просрочено» на дашборде. Ссылки из сумм под риском в детализацию.</div>
+        </div>
+      </div>
+      <div class="cl-item">
+        <span class="cl-icon">🔴</span>
+        <div>
+          <div class="cl-item-title">Уровни риска</div>
+          <div class="cl-item-desc">Три уровня риска (низкий, средний, высокий) с цветовой индикацией и агрегированными суммами на дашборде.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── v1.0 ── #}
+  <div class="cl-version">
+    <div class="cl-version-head">
+      <span class="cl-badge cl-badge-prev">v1.0</span>
+      <span class="cl-date">Апрель 2026</span>
+    </div>
+    <div class="cl-items">
+      <div class="cl-item">
+        <span class="cl-icon">🚀</span>
+        <div>
+          <div class="cl-item-title">Запуск портала</div>
+          <div class="cl-item-desc">Первый рабочий вариант: дашборд с плитками KPI (Факт, Факт+0‑100, 0‑100, Возможности), детализация строк ФП, фильтрация по клиенту и ответственному.</div>
+        </div>
+      </div>
+      <div class="cl-item">
+        <span class="cl-icon">📂</span>
+        <div>
+          <div class="cl-item-title">Импорт из Excel</div>
+          <div class="cl-item-desc">Загрузка файла ФП через веб-интерфейс. Автоматическое определение новых, изменённых и пропавших строк.</div>
+        </div>
+      </div>
+      <div class="cl-item">
+        <span class="cl-icon">👤</span>
+        <div>
+          <div class="cl-item-title">Управление пользователями</div>
+          <div class="cl-item-desc">Три роли: Руководитель продукта, Руководитель команды, Наблюдатель. Управление через страницу администратора.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>{# /changelog-wrap #}
+
+<style>
+.changelog-wrap {
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.cl-version {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.cl-version-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+
+.cl-badge {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+
+.cl-badge-prev {
+  color: var(--ink-500);
+  background: var(--ink-100);
+  border-color: var(--line);
+}
+
+.cl-date {
+  font-size: 12.5px;
+  color: var(--ink-500);
+}
+
+.cl-tag {
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 2px 7px;
+}
+
+.cl-tag-hot {
+  background: var(--ok-bg);
+  color: var(--ok);
+  border: 1px solid var(--ok);
+}
+
+.cl-items {
+  padding: 6px 0 10px;
+}
+
+.cl-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.cl-item:last-child { border-bottom: none; }
+
+.cl-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  width: 28px;
+  text-align: center;
+  margin-top: 1px;
+}
+
+.cl-item-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-900);
+  margin-bottom: 2px;
+}
+
+.cl-item-desc {
+  font-size: 12.5px;
+  color: var(--ink-500);
+  line-height: 1.5;
+}
+</style>
+{% endblock %}

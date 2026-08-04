@@ -7,6 +7,7 @@
   --paper: #f7f8fa;
   --card: #ffffff;
   --line: #dde1e9;
+  --sidebar-bg: #14213d;
 
   --accent: #2563a8;
   --accent-dark: #1c4878;
@@ -60,7 +61,7 @@ a:hover { text-decoration: underline; }
 .sidebar {
   width: 220px;
   flex-shrink: 0;
-  background: var(--ink-900);
+  background: var(--sidebar-bg);
   color: #fff;
   display: flex;
   flex-direction: column;
@@ -195,6 +196,13 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .sidebar-logout:hover { color: #fff; text-decoration: none; }
+.sidebar-changelog {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.sidebar-changelog:hover, .sidebar-changelog.active { color: #fff; text-decoration: none; }
 
 /* ── Масштаб страницы ── */
 .scale-ctrl {
@@ -1906,4 +1914,50 @@ select.status-select { font-size: 12px; padding: 4px 8px; border-radius: 6px; fo
   background: color-mix(in srgb, var(--ok) 15%, transparent);
   color: var(--ok);
   font-weight: 600;
+}
+
+/* ── Кнопка переключения темы ── */
+.theme-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: var(--radius);
+  background: transparent;
+  color: rgba(255,255,255,0.65);
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.4;
+  transition: background 0.15s, color 0.15s;
+}
+.theme-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+
+/* ── Тёмная тема ── */
+[data-theme="dark"] {
+  --sidebar-bg: #0f1623;
+  --paper: #111827;
+  --card: #1a2236;
+  --ink-900: #dde4f0;
+  --ink-700: #b0bdd4;
+  --ink-500: #7a8eaa;
+  --ink-300: #3d4f6a;
+  --ink-100: #1e2a3e;
+  --line: #252f45;
+  --accent: #4d8fd4;
+  --accent-dark: #3a73b0;
+  --accent-bg: #152338;
+  --ok: #34c47a;
+  --ok-bg: #0e2518;
+  --warn: #f0a030;
+  --warn-bg: #241c08;
+  --danger: #e05050;
+  --danger-bg: #2d1010;
+  --neutral-bg: #1a2236;
+  --fact-bg: #0e2518;
+  --risk-low: #c8a030;
+  --risk-low-bg: #221c08;
+  --risk-medium: #d07030;
+  --risk-medium-bg: #251608;
+  --risk-high: #e05050;
+  --risk-high-bg: #2d1010;
+  --shadow: 0 1px 4px rgba(0,0,0,0.4), 0 2px 12px rgba(0,0,0,0.3);
 }

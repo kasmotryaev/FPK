@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" id="pg-html">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -106,7 +106,9 @@
             <button class="scale-btn" onclick="pgScaleChange(-0.1)" title="Уменьшить">A−</button>
             <span class="scale-val" id="pg-scale-val">100%</span>
             <button class="scale-btn" onclick="pgScaleChange(+0.1)" title="Увеличить">A+</button>
+            <button class="theme-btn" id="pg-theme-btn" onclick="pgThemeToggle()" title="Переключить тему">🌙</button>
           </div>
+          <a href="{{ url_for('changelog') }}" class="sidebar-changelog {{ 'active' if request.endpoint == 'changelog' }}" title="История версий портала">Что нового</a>
           <a href="{{ url_for('logout') }}" class="sidebar-logout">Выйти</a>
         </div>
       </div>
@@ -134,6 +136,20 @@
   window.pgScaleChange = function (d) { apply(cur + d); };
   try { var s = parseFloat(localStorage.getItem(KEY)); if (s && !isNaN(s)) apply(s); else apply(1.0); }
   catch (e) { apply(1.0); }
+
+  // ── Тёмная тема ──
+  var THEME_KEY = 'fp_theme';
+  function pgThemeApply(dark) {
+    document.getElementById('pg-html').setAttribute('data-theme', dark ? 'dark' : '');
+    var btn = document.getElementById('pg-theme-btn');
+    if (btn) btn.textContent = dark ? '☀' : '🌙';
+  }
+  window.pgThemeToggle = function () {
+    var isDark = document.getElementById('pg-html').getAttribute('data-theme') === 'dark';
+    pgThemeApply(!isDark);
+    try { localStorage.setItem(THEME_KEY, !isDark ? 'dark' : ''); } catch(e) {}
+  };
+  try { pgThemeApply(localStorage.getItem(THEME_KEY) === 'dark'); } catch(e) {}
 })();
 </script>
 </body>

@@ -1339,6 +1339,14 @@ def logout():
     return redirect(url_for("login"))
 
 
+# ---------- История версий ----------
+
+@app.route("/changelog")
+@login_required
+def changelog():
+    return render_template("changelog.html")
+
+
 # ---------- Dashboard ----------
 
 @app.route("/")
@@ -2235,11 +2243,20 @@ def changes_view():
         tab = "new"
     show_all = request.args.get("show") == "all"
     import_log_id = request.args.get("import_log_id", "")
+    filter_sections = request.args.getlist("section")  # [] = все разделы
+    sort_by = request.args.get("sort", "date")          # "date" | "amount"
+    # Пресет «управляемые» — убирает Сопровождение и TaaS
+    MANAGED_SECTIONS = ["Проекты", "Заказные доработки", "Лицензии", "Докупки"]
 
     conn = get_conn()
 
-    # Список загрузок для фильтра «Дата загрузки» — только те загрузки, по которым
-    # реально есть события в журнале изменений (иначе в списке появлялись бы пустые даты).
+    # Все разделы, встречающиеся в событиях (для фильтра)
+    all_sections_q = conn.execute(
+        "SELECT DISTINCT e.section FROM row_events e ORDER BY e.section"
+    ).fetchall()
+    all_sections = [r["section"] for r in all_sections_q if r["section"]]
+
+    # Список загрузок для фильтра «Дата загрузки»
     import_logs = conn.execute("""
         SELECT DISTINCT il.id, il.filename, il.imported_at
         FROM import_log il
@@ -2263,8 +2280,22 @@ def changes_view():
     if import_log_id:
         query += " AND e.import_log_id = ?"
         params.append(import_log_id)
-    query += " ORDER BY e.created_at DESC LIMIT 500"
+    if filter_sections:
+        ph_sec = ",".join("?" * len(filter_sections))
+        query += f" AND e.section IN ({ph_sec})"
+        params.extend(filter_sections)
+    order_col = "COALESCE(e.amount_after, e.amount_before, f.amount_0_100) DESC, e.created_at DESC" \
+        if sort_by == "amount" else "e.created_at DESC"
+    query += f" ORDER BY {order_col} LIMIT 500"
     events = conn.execute(query, params).fetchall()
+
+    # Группируем по разделу для шаблона: [(section, [events])]
+    from collections import OrderedDict
+    grouped: dict = OrderedDict()
+    for e in events:
+        sec = e["section"] or "Без раздела"
+        grouped.setdefault(sec, []).append(e)
+    events_by_section = list(grouped.items())
 
     counts = {}
     for key, t in TAB_EVENT_TYPES.items():
@@ -2277,9 +2308,12 @@ def changes_view():
         counts[key] = conn.execute(count_query, count_params).fetchone()["c"]
     conn.close()
     return render_template(
-        "changes.html", events=events, tab=tab, show_all=show_all,
+        "changes.html", events=events, events_by_section=events_by_section,
+        tab=tab, show_all=show_all,
         counts=counts, tab_labels=TAB_LABELS,
         import_logs=import_logs, filter_import_log_id=import_log_id,
+        all_sections=all_sections, filter_sections=filter_sections,
+        sort_by=sort_by, managed_sections=MANAGED_SECTIONS,
     )
 
 
