@@ -1166,6 +1166,10 @@ select.status-select { font-size: 12px; padding: 4px 8px; border-radius: 6px; fo
    ════════════════════════════════════════════ */
 .fp-cli-block { }
 
+/* The inline comment editor is absolutely positioned outside the table row.
+   Keep the closed client card clipped, but let an open card show its popovers. */
+.fp-cli-block[open] { overflow: visible; }
+
 .fp-cli-head {
   display: flex;
   align-items: stretch;
@@ -1339,6 +1343,7 @@ select.status-select { font-size: 12px; padding: 4px 8px; border-radius: 6px; fo
   display: inline-block;
   flex-shrink: 0;
 }
+.agg-comment-pop[open] { z-index: 300; }
 .agg-comment-pop > summary {
   list-style: none;
   cursor: pointer;

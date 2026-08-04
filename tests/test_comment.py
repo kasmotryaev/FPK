@@ -10,6 +10,12 @@ import sys, os, re, types, unittest, tempfile, shutil, sqlite3
 
 # ── заглушка werkzeug (нет в sandbox-python, но нужна db.py при импорте) ─────
 def _stub_werkzeug():
+    try:
+        import werkzeug.security
+        return
+    except ImportError:
+        pass
+
     _ws     = types.ModuleType("werkzeug")
     _ws_sec = types.ModuleType("werkzeug.security")
     _ws_sec.generate_password_hash = lambda pw, **kw: "hashed:" + pw
@@ -109,6 +115,19 @@ class T1_TemplateFieldName(unittest.TestCase):
         good = re.findall(r'\br\.internal_comment\b', self._html())
         self.assertGreater(len(good), 0,
             "rows_list.html не использует r.internal_comment.")
+
+
+class T1b_CommentPopoverVisibility(unittest.TestCase):
+    _CSS = os.path.join(ROOT, "app", "static", "css", "style.css")
+
+    def test_open_client_card_does_not_clip_editor(self):
+        with open(self._CSS, encoding="utf-8") as f:
+            css = f.read()
+        self.assertRegex(
+            css,
+            r"\.fp-cli-block\[open\]\s*\{[^}]*overflow:\s*visible",
+            "Open client card must not clip the inline comment editor.",
+        )
 
 
 class T2_CommentSurvivesReimport(unittest.TestCase):
