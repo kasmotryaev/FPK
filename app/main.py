@@ -2247,6 +2247,13 @@ def changes_view():
     sort_by = request.args.get("sort", "date")          # "date" | "amount"
     # Пресет «управляемые» — убирает Сопровождение и TaaS
     MANAGED_SECTIONS = ["Проекты", "Заказные доработки", "Лицензии", "Докупки"]
+    # select отправляет section='' при выборе «Все разделы» — убираем пустые строки,
+    # иначе Flask вернёт [''] (непустой список) и фильтр AND section IN ('') даст 0 строк
+    filter_sections = [s for s in filter_sections if s]
+    # Если форма отправила буквальное значение '__managed__' (смена другого фильтра
+    # при активном пресете), раскрываем его в список реальных разделов
+    if filter_sections == ["__managed__"]:
+        filter_sections = list(MANAGED_SECTIONS)
 
     conn = get_conn()
 

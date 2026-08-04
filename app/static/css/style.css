@@ -504,7 +504,7 @@ tr.row-risk-high { background: var(--risk-high-bg); }
 
 .filters { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
 .filters select, .filters input[type=text] {
-  border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; font-size: 13px; background: var(--card);
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; font-size: 13px; background: var(--card); color: var(--ink-900);
 }
 .filters label { font-size: 12.5px; color: var(--ink-500); display: flex; align-items: center; gap: 6px; }
 
@@ -549,7 +549,7 @@ tr.row-risk-high { background: var(--risk-high-bg); }
 .form-group { margin-bottom: 14px; }
 .form-group label { display: block; font-size: 12.5px; font-weight: 600; color: var(--ink-700); margin-bottom: 5px; }
 .form-group input, .form-group select, .form-group textarea {
-  width: 100%; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; font-size: 13.5px; font-family: inherit;
+  width: 100%; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; font-size: 13.5px; font-family: inherit; background: var(--card); color: var(--ink-900);
 }
 .form-row { display: flex; gap: 14px; }
 .form-row .form-group { flex: 1; }
@@ -1933,6 +1933,7 @@ select.status-select { font-size: 12px; padding: 4px 8px; border-radius: 6px; fo
 
 /* ── Тёмная тема ── */
 [data-theme="dark"] {
+  color-scheme: dark;
   --sidebar-bg: #0f1623;
   --paper: #111827;
   --card: #1a2236;
@@ -1961,3 +1962,31 @@ select.status-select { font-size: 12px; padding: 4px 8px; border-radius: 6px; fo
   --risk-high-bg: #2d1010;
   --shadow: 0 1px 4px rgba(0,0,0,0.4), 0 2px 12px rgba(0,0,0,0.3);
 }
+
+/* Вкладки: active использует --ink-900 как фон (тёмно-синий в светлой теме),
+   но в тёмной теме --ink-900 становится светлым — переопределяем на accent */
+[data-theme="dark"] .tabs a.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+/* Фильтры и формы: явные цвета для input/select чтобы не полагаться на браузерные дефолты */
+[data-theme="dark"] .filters select,
+[data-theme="dark"] .filters input[type=text],
+[data-theme="dark"] .form-group input,
+[data-theme="dark"] .form-group select,
+[data-theme="dark"] .form-group textarea,
+[data-theme="dark"] .diff-select,
+[data-theme="dark"] .popover-search,
+[data-theme="dark"] .agg-risk-sel,
+[data-theme="dark"] select.status-select {
+  background: var(--card);
+  color: var(--ink-900);
+  border-color: var(--line);
+}
+/* Кнопки: hover-фон через ink-100 работает, но цвет текста нужно зафиксировать */
+[data-theme="dark"] .btn {
+  color: var(--ink-900);
+}
+[data-theme="dark"] .btn-primary { color: #fff; }
+[data-theme="dark"] .btn-danger  { color: var(--danger); }
