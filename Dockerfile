@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM mirror.gcr.io/library/python:3.11-slim
 
 WORKDIR /app
 
@@ -27,7 +27,6 @@ RUN mkdir -p app/data/uploads
 EXPOSE 5001
 
 # Переменные окружения — переопределите в docker-compose.yml или при запуске
-ENV FP_PORTAL_SECRET="change-me"
 ENV OLLAMA_HOST="http://host.docker.internal:11434"
 ENV OLLAMA_MODEL="qwen3:8b"
 ENV OLLAMA_TIMEOUT="60"

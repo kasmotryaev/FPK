@@ -1,6 +1,7 @@
 import os
 import re
 import glob
+import socket
 import shutil
 import datetime
 import json
@@ -15,6 +16,7 @@ from collections import Counter
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
+import smbclient
 
 from app.db import (
     get_conn, init_db, TEAM_LEADS, OWNER_SECTIONS, TEAM_LEAD_SECTIONS, OWNER_LABEL, ALL_RESPONSIBLE,
@@ -1967,9 +1969,8 @@ def smb_settings_save():
 @login_required
 @owner_required
 def smb_fetch():
-    """Монтирует SMB-шару через mount_smbfs (macOS), копирует последний .xlsx и
+    """Загружает файл напрямую по SMB 2/3 без монтирования сетевого диска и
     импортирует его так же, как при ручной загрузке через форму /import."""
-    import subprocess as _sp
 
     conn = get_conn()
     smb_server    = get_setting(conn, "smb_server") or ""
@@ -1986,64 +1987,84 @@ def smb_fetch():
         flash("Укажите сервер, шару и логин в настройках сетевой папки.", "error")
         return redirect(url_for("import_view"))
 
-    # mount_smbfs URL: //[DOMAIN;]user:password@server/share
-    # Разделитель домена и пользователя — «;», а не «\» (как в Windows-нотации).
-    # Все компоненты кроме сервера percent-кодируются, чтобы спецсимволы не ломали URL.
-    if "\\" in smb_username:
-        domain, user = smb_username.split("\\", 1)
-        safe_user = urllib.parse.quote(domain, safe="") + ";" + urllib.parse.quote(user, safe="")
-    else:
-        safe_user = urllib.parse.quote(smb_username, safe="")
-    safe_pwd   = urllib.parse.quote(smb_password, safe="")
-    safe_share = urllib.parse.quote(smb_share, safe="")
-    smb_url    = f"//{safe_user}:{safe_pwd}@{smb_server}/{safe_share}"
+    server = smb_server.strip().strip("\\/")
+    share = smb_share.strip().strip("\\/")
+    if not server or "\\" in server or "/" in server:
+        flash("Некорректное имя SMB-сервера.", "error")
+        return redirect(url_for("import_view"))
+    if not share or "\\" in share or "/" in share or share in (".", ".."):
+        flash("Некорректное имя сетевой папки (share).", "error")
+        return redirect(url_for("import_view"))
 
-    mnt = tempfile.mkdtemp(prefix="fp_smb_")
-    mounted = False
+    subfolder_parts = [part for part in re.split(r"[\\/]+", smb_subfolder.strip()) if part]
+    if any(part in (".", "..") or ":" in part for part in subfolder_parts):
+        flash("Некорректный путь подпапки SMB.", "error")
+        return redirect(url_for("import_view"))
+
+    remote_dir = "\\\\" + server + "\\" + share
+    if subfolder_parts:
+        remote_dir += "\\" + "\\".join(subfolder_parts)
+
+    requested_name = smb_filename.strip()
+    if requested_name and ("\\" in requested_name or "/" in requested_name or requested_name in (".", "..")):
+        flash("В поле имени файла укажите только имя, без пути.", "error")
+        return redirect(url_for("import_view"))
+
     dest = None
+    temp_dest = None
     try:
-        res = _sp.run(["mount_smbfs", smb_url, mnt],
-                      capture_output=True, text=True, timeout=20)
-        if res.returncode != 0:
-            err = (res.stderr or res.stdout or "неизвестная ошибка").strip()
-            flash(f"Не удалось подключиться к шаре: {err}", "error")
-            return redirect(url_for("import_view"))
-        mounted = True
+        smbclient.register_session(
+            server,
+            username=smb_username,
+            password=smb_password,
+            connection_timeout=20,
+        )
 
-        search_dir = os.path.join(mnt, smb_subfolder) if smb_subfolder else mnt
-
-        if smb_filename:
-            src = os.path.join(search_dir, smb_filename)
-            if not os.path.exists(src):
-                flash(f"Файл «{smb_filename}» не найден в {smb_subfolder or '/'}.", "error")
+        if requested_name:
+            fname = requested_name
+            remote_file = remote_dir + "\\" + fname
+            try:
+                smbclient.stat(remote_file)
+            except FileNotFoundError:
+                flash(f"Файл «{fname}» не найден в {smb_subfolder or '/'}.", "error")
                 return redirect(url_for("import_view"))
         else:
-            xlsx_files = glob.glob(os.path.join(search_dir, "*.xlsx"))
-            if not xlsx_files:
+            entries = smbclient.scandir(remote_dir)
+            try:
+                candidates = [
+                    entry for entry in entries
+                    if entry.is_file() and entry.name.lower().endswith(".xlsx")
+                ]
+            finally:
+                close = getattr(entries, "close", None)
+                if close:
+                    close()
+            if not candidates:
                 flash("В сетевой папке не найдено файлов .xlsx.", "error")
                 return redirect(url_for("import_view"))
-            src = max(xlsx_files, key=os.path.getmtime)
+            newest = max(candidates, key=lambda entry: entry.stat().st_mtime)
+            fname = newest.name
+            remote_file = remote_dir + "\\" + fname
 
-        fname = os.path.basename(src)
-        dest  = UPLOAD_DIR / secure_filename(fname)
-        shutil.copy2(src, dest)
+        local_name = secure_filename(fname) or "financial_plan.xlsx"
+        dest = UPLOAD_DIR / local_name
+        with smbclient.open_file(remote_file, mode="rb") as source, \
+             tempfile.NamedTemporaryFile(dir=UPLOAD_DIR, prefix=".smb_", delete=False) as target:
+            temp_dest = Path(target.name)
+            shutil.copyfileobj(source, target, length=1024 * 1024)
+        os.replace(temp_dest, dest)
+        temp_dest = None
 
-    except _sp.TimeoutExpired:
+    except (TimeoutError, socket.timeout):
         flash("Таймаут при подключении к сетевой папке. Проверьте доступность сервера.", "error")
         return redirect(url_for("import_view"))
     except Exception as e:
-        flash(f"Ошибка при работе с сетевой папкой: {e}", "error")
+        flash(f"Ошибка SMB при работе с сетевой папкой: {e}", "error")
         return redirect(url_for("import_view"))
     finally:
-        if mounted:
-            try:
-                _sp.run(["umount", mnt], capture_output=True, timeout=10)
-            except Exception:
-                pass
-        try:
-            os.rmdir(mnt)
-        except Exception:
-            pass
+        if temp_dest is not None:
+            temp_dest.unlink(missing_ok=True)
+        smbclient.reset_connection_cache()
 
     if dest is None:
         return redirect(url_for("import_view"))
@@ -2922,6 +2943,7 @@ def edit_user(user_id):
     username = request.form.get("username", "").strip().lower()
     full_name = request.form.get("full_name", "").strip()
     password = request.form.get("password", "")
+    password_confirm = request.form.get("password_confirm", password)
     role = request.form.get("role")
     team_lead_name = request.form.get("team_lead_name") or None
     if role != "team_lead":
@@ -2937,6 +2959,12 @@ def edit_user(user_id):
         conn.close()
         return redirect(url_for("admin_users"))
 
+    if password and password != password_confirm:
+        flash("Новый пароль и подтверждение не совпадают", "error")
+        conn.close()
+        return redirect(url_for("admin_users"))
+
+    password_changed = bool(password)
     if user["role"] == "owner" and role != "owner":
         remaining_owners = conn.execute(
             "SELECT COUNT(*) c FROM users WHERE role = 'owner' AND id != ?", (user_id,)
@@ -2947,11 +2975,15 @@ def edit_user(user_id):
             return redirect(url_for("admin_users"))
 
     try:
-        if password:
+        if password_changed:
+            password_hash = generate_password_hash(password, method="pbkdf2:sha256")
             conn.execute(
                 "UPDATE users SET username=?, full_name=?, password_hash=?, role=?, team_lead_name=? WHERE id=?",
-                (username, full_name, generate_password_hash(password, method="pbkdf2:sha256"), role, team_lead_name, user_id),
+                (username, full_name, password_hash, role, team_lead_name, user_id),
             )
+            saved = conn.execute("SELECT password_hash FROM users WHERE id = ?", (user_id,)).fetchone()
+            if not saved or not check_password_hash(saved["password_hash"], password):
+                raise RuntimeError("Не удалось проверить сохранённый пароль")
         else:
             conn.execute(
                 "UPDATE users SET username=?, full_name=?, role=?, team_lead_name=? WHERE id=?",
@@ -2959,12 +2991,21 @@ def edit_user(user_id):
             )
         conn.commit()
         if session.get("user_id") == user_id:
+            if password_changed:
+                session.clear()
+                conn.close()
+                flash("Пароль изменён. Войдите с новым паролем.", "success")
+                return redirect(url_for("login"))
             session["username"] = username
             session["full_name"] = full_name
             session["role"] = role
             session["team_lead_name"] = team_lead_name
-        flash(f"Пользователь «{full_name}» обновлён", "success")
+        if password_changed:
+            flash(f"Пароль пользователя «{full_name}» изменён", "success")
+        else:
+            flash(f"Пользователь «{full_name}» обновлён", "success")
     except Exception as e:
+        conn.rollback()
         flash(f"Ошибка: {e}", "error")
     conn.close()
     return redirect(url_for("admin_users"))
