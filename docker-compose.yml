@@ -7,9 +7,9 @@ services:
       # Порт доступен только с этого компьютера.
       - "127.0.0.1:5001:5001"
     volumes:
-      # Все данные (база + загруженные файлы) хранятся в именованном томе.
-      # Данные сохраняются между перезапусками и обновлениями контейнера.
-      - fp_data:/app/app/data
+      # База и загруженные файлы хранятся в каталоге DB рядом с проектом.
+      # Это упрощает резервное копирование данных средствами Windows.
+      - ./DB:/app/app/data
     environment:
       # Секрет хранится локально в .env и не попадает в Git.
       - FP_PORTAL_SECRET=${FP_PORTAL_SECRET:?Укажите FP_PORTAL_SECRET в файле .env}
@@ -20,7 +20,3 @@ services:
       - OLLAMA_HOST=http://host.docker.internal:11434
       - OLLAMA_MODEL=qwen3:8b
     restart: unless-stopped
-
-volumes:
-  fp_data:
-    driver: local

@@ -1,6 +1,7 @@
 # ── Личные данные — НИКОГДА не попадают в репозиторий ─────────
 .env
 app/data/
+DB/
 bot/token.txt
 logs/
 fp_portal.db
