@@ -283,9 +283,9 @@
         <details class="ts-emp-bulk">
           <summary>Загрузить из файла</summary>
           <form method="POST" action="{{ url_for('ts_import_employees') }}" enctype="multipart/form-data" class="ts-upload-form">
-            <label style="font-size:12px;color:var(--ink-500)">Excel: строка 1 — заголовок, далее ФИО в первом столбце</label>
+            <label style="font-size:12px;color:var(--ink-500)">Excel (.xlsx): строка 1 — заголовок, далее ФИО в первом столбце</label>
             <div class="ts-upload-row">
-              <input type="file" name="emp_file" accept=".xlsx,.xls">
+              <input type="file" name="emp_file" accept=".xlsx,.xlsm,.xltx,.xltm">
               <button class="btn btn-sm btn-primary" type="submit">Загрузить</button>
             </div>
           </form>

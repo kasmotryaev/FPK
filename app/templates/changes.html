@@ -162,16 +162,23 @@
               {% else %}
                 <span class="tag tag-neutral">{{ e.field_label }}</span>
                 <span class="muted">{{ e.old_value if e.old_value is not none else '—' }}</span> → <strong>{{ e.new_value if e.new_value is not none else '—' }}</strong>
+                <div class="muted" style="font-size:12px; margin-top:3px">
+                  <em>сумма 0‑100: <strong>{{ "{:,.0f}".format(e.current_amount or 0).replace(',', ' ') }} ₽</strong></em>
+                </div>
               {% endif %}
             </td>
             <td style="white-space:nowrap">
               {% if e.reviewed_at %}
                 <span class="muted" style="font-size:12px">✓ просмотрено {{ e.reviewed_at }}{% if e.reviewed_by_name %} ({{ e.reviewed_by_name }}){% endif %}</span>
               {% else %}
-                <form method="POST" action="{{ url_for('review_change', event_id=e.id) }}">
+                <form method="POST" action="{{ url_for('review_change', event_id=e.id) }}" class="js-review-change">
                   <input type="hidden" name="tab" value="{{ tab }}">
                   <input type="hidden" name="show" value="{{ 'all' if show_all else '' }}">
                   <input type="hidden" name="import_log_id" value="{{ filter_import_log_id }}">
+                  <input type="hidden" name="sort" value="{{ sort_by }}">
+                  {% for filter_section in filter_sections %}
+                    <input type="hidden" name="section" value="{{ filter_section }}">
+                  {% endfor %}
                   <button class="btn btn-sm" type="submit">Просмотрено</button>
                 </form>
               {% endif %}
@@ -186,6 +193,48 @@
     <div class="empty-state"><div class="big">✓</div>{{ 'Нет непросмотренных изменений в этой категории' if not show_all else 'Событий пока не было' }}</div>
   {% endif %}
 </div>
+
+<script>
+(function () {
+  document.querySelectorAll('form.js-review-change').forEach(function (form) {
+    form.addEventListener('submit', function (event) {
+      if (!window.fetch) return;
+      event.preventDefault();
+
+      var button = form.querySelector('button[type="submit"]');
+      button.disabled = true;
+
+      fetch(form.action, {
+        method: 'POST',
+        body: new FormData(form),
+        credentials: 'same-origin',
+        headers: {
+          'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      })
+        .then(function (response) {
+          return response.json().then(function (data) {
+            if (!response.ok || !data.ok) throw new Error(data.error || 'Ошибка запроса');
+            return data;
+          });
+        })
+        .then(function (data) {
+          var label = document.createElement('span');
+          label.className = 'muted';
+          label.style.fontSize = '12px';
+          label.textContent = '✓ просмотрено ' + data.reviewed_at
+            + (data.reviewed_by_name ? ' (' + data.reviewed_by_name + ')' : '');
+          form.replaceWith(label);
+        })
+        .catch(function () {
+          button.disabled = false;
+          form.submit();
+        });
+    });
+  });
+})();
+</script>
 
 <style>
 .changes-section-group { margin-bottom: 6px; }
