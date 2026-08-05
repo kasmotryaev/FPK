@@ -2312,7 +2312,7 @@ def changes_view():
         ph_sec = ",".join("?" * len(filter_sections))
         query += f" AND e.section IN ({ph_sec})"
         params.extend(filter_sections)
-    order_col = "COALESCE(e.amount_after, e.amount_before, f.amount_0_100) DESC, e.created_at DESC" \
+    order_col = "COALESCE(NULLIF(e.amount_after,0), NULLIF(e.amount_before,0), f.amount_0_100) DESC, e.created_at DESC" \
         if sort_by == "amount" else "e.created_at DESC"
     query += f" ORDER BY {order_col} LIMIT 500"
     events = conn.execute(query, params).fetchall()
