@@ -2353,15 +2353,40 @@ def changes_view():
 def review_change(event_id):
     conn = get_conn()
     conn.execute(
-        "UPDATE row_events SET reviewed_at = CURRENT_TIMESTAMP, reviewed_by = ? WHERE id = ?",
+        """UPDATE row_events
+           SET reviewed_at = CURRENT_TIMESTAMP, reviewed_by = ?
+           WHERE id = ? AND reviewed_at IS NULL""",
         (session["user_id"], event_id),
     )
+    reviewed = conn.execute(
+        """SELECT e.reviewed_at, u.full_name AS reviewed_by_name
+           FROM row_events e
+           LEFT JOIN users u ON u.id = e.reviewed_by
+           WHERE e.id = ?""",
+        (event_id,),
+    ).fetchone()
     conn.commit()
     conn.close()
+
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        if reviewed is None:
+            return jsonify({"ok": False, "error": "Изменение не найдено"}), 404
+        return jsonify({
+            "ok": True,
+            "reviewed_at": reviewed["reviewed_at"],
+            "reviewed_by_name": reviewed["reviewed_by_name"],
+        })
+
     tab = request.form.get("tab", "new")
     show_all = request.form.get("show", "")
     import_log_id = request.form.get("import_log_id", "")
-    return redirect(url_for("changes_view", tab=tab, show=(show_all or None), import_log_id=(import_log_id or None)))
+    filter_sections = [s for s in request.form.getlist("section") if s]
+    sort_by = request.form.get("sort", "date")
+    return redirect(url_for(
+        "changes_view", tab=tab, show=(show_all or None),
+        import_log_id=(import_log_id or None), section=filter_sections,
+        sort=sort_by,
+    ))
 
 
 @app.route("/changes/review_all", methods=["POST"])
@@ -3775,15 +3800,32 @@ def ts_import_employees():
         flash("Выберите файл", "error")
         return redirect(url_for("timesheets"))
 
-    filename = secure_filename(f.filename)
-    tmp_path = UPLOAD_DIR / filename
-    f.save(tmp_path)
+    suffix = Path(f.filename.strip()).suffix.lower()
+    supported_extensions = {".xlsx", ".xlsm", ".xltx", ".xltm"}
+    if suffix not in supported_extensions:
+        flash("Поддерживаются файлы .xlsx, .xlsm, .xltx и .xltm", "error")
+        return redirect(url_for("timesheets"))
 
+    tmp_path = None
     try:
+        # secure_filename() удаляет кириллицу и превращает «Сотрудники.xlsx» в
+        # «xlsx» без расширения. openpyxl проверяет расширение пути и отклоняет
+        # такой файл, хотя его содержимое является корректным XLSX-архивом.
+        with tempfile.NamedTemporaryFile(
+            dir=UPLOAD_DIR, prefix="employees_", suffix=suffix, delete=False,
+        ) as tmp:
+            f.save(tmp)
+            tmp_path = Path(tmp.name)
         names = parse_employees_file(str(tmp_path))
     except Exception as e:
         flash(f"Ошибка разбора файла: {e}", "error")
         return redirect(url_for("timesheets"))
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     conn = get_conn()
     added = 0
