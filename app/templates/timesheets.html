@@ -197,6 +197,10 @@
         <span class="ts-extra-title">Без моих сотрудников</span>
         <span class="ts-extra-sub">только чужие списания</span>
         <span class="ts-extra-hours">{{ "%.1f"|format(hours_no_mine) }} ч</span>
+        {% if current_import %}
+        <a href="{{ url_for('ts_export_no_mine', import_id=current_import.id) }}"
+           class="btn btn-sm" style="flex-shrink:0;margin-left:auto" title="Скачать в Excel">⬇ xlsx</a>
+        {% endif %}
       </div>
       {{ ts_hier(hierarchy_no_mine, hours_no_mine, emp_names, false, false) }}
     </div>
@@ -212,6 +216,10 @@
           <span class="ts-split-other">■ другие</span>, ч
         </span>
         <span class="ts-extra-hours">{{ "%.1f"|format(hours_less_mine) }} ч</span>
+        {% if current_import %}
+        <a href="{{ url_for('ts_export_less_mine', import_id=current_import.id) }}"
+           class="btn btn-sm" style="flex-shrink:0;margin-left:auto" title="Скачать в Excel">⬇ xlsx</a>
+        {% endif %}
       </div>
       {{ ts_hier(hierarchy_less_mine, hours_less_mine, emp_names, true, false) }}
     </div>

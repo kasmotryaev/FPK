@@ -4199,6 +4199,144 @@ def ts_export():
     )
 
 
+# ─── Трудозатраты: выгрузка отфильтрованных блоков в Excel ──────────────────
+
+def _ts_export_block(import_id, filter_type):
+    """Общий хелпер для выгрузки блоков «Без моих сотрудников» и «Мои меньше чужих»."""
+    conn = get_conn()
+    imp = conn.execute("SELECT * FROM ts_imports WHERE id = ?", (import_id,)).fetchone()
+    if not imp:
+        conn.close()
+        flash("Импорт не найден", "error")
+        return redirect(url_for("timesheets"))
+
+    ts_rp_filter = get_setting(conn, "ts_rp_filter") or ""
+    employees = conn.execute("SELECT full_name FROM my_employees").fetchall()
+    emp_names = {e["full_name"].upper() for e in employees}
+
+    all_rows = conn.execute(
+        "SELECT * FROM ts_rows WHERE import_id = ? ORDER BY dept, employee, project",
+        (import_id,),
+    ).fetchall()
+    conn.close()
+
+    # Та же фильтрация по rp_filter, что в timesheets()
+    rp_filter_val = ts_rp_filter.strip()
+    if rp_filter_val:
+        rows_main = [
+            r for r in all_rows
+            if not (
+                r["rp_product"] is not None
+                and (r["rp_product"] or "").strip() == rp_filter_val
+                and (r["rp"] or "").strip() != rp_filter_val
+            )
+        ]
+    else:
+        rows_main = all_rows
+
+    # Считаем часы по проектам (мои vs чужие)
+    proj_mine, proj_others = {}, {}
+    for r in rows_main:
+        emp_up = (r["employee"] or "—").upper()
+        proj = r["project"] or "—"
+        proj_mine.setdefault(proj, 0.0)
+        proj_others.setdefault(proj, 0.0)
+        if emp_up in emp_names:
+            proj_mine[proj] += r["hours"]
+        else:
+            proj_others[proj] += r["hours"]
+
+    if filter_type == "no-mine":
+        target_projs = {p for p in proj_others if proj_mine.get(p, 0) == 0 and proj_others[p] > 0}
+        title_suffix = "bez_moikh"
+        sheet_title = "Без моих сотрудников"
+    else:  # less-mine
+        target_projs = {
+            p for p in proj_mine
+            if proj_mine[p] > 0 and proj_mine[p] < proj_others.get(p, 0)
+        }
+        title_suffix = "moi_menshe"
+        sheet_title = "Мои меньше чужих"
+
+    export_rows = [r for r in rows_main if (r["project"] or "—") in target_projs]
+
+    # Агрегация по (задача, сотрудник): суммируем часы при совпадении
+    # Если задача пустая — берём project_type ("Тип источника ПЦ")
+    agg = {}
+    for r in export_rows:
+        task_val = (r["task"] or "").strip() or (r["project_type"] or "").strip() or "—"
+        emp_val = (r["employee"] or "").strip()
+        key = (task_val, emp_val)
+        if key not in agg:
+            agg[key] = {"task": task_val, "employee": emp_val, "hours": 0.0, "dept": r["dept"]}
+        agg[key]["hours"] += r["hours"]
+
+    # Сортировка по убыванию часов
+    agg_rows = sorted(agg.values(), key=lambda x: -x["hours"])
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from io import BytesIO
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_title[:31]
+
+    headers = ["Задача", "ФИО сотрудника", "Часы", "Департамент"]
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(fill_type="solid", fgColor="2563A8")
+
+    for i, row_data in enumerate(agg_rows, 2):
+        ws.cell(row=i, column=1, value=row_data["task"])
+        ws.cell(row=i, column=2, value=row_data["employee"])
+        ws.cell(row=i, column=3, value=row_data["hours"])
+        ws.cell(row=i, column=4, value=row_data["dept"])
+
+    # Итоговая строка
+    total_row = len(agg_rows) + 2
+    ws.cell(row=total_row, column=1, value="Итого").font = Font(bold=True)
+    ws.cell(row=total_row, column=3, value=sum(r["hours"] for r in agg_rows)).font = Font(bold=True)
+
+    for col in ws.columns:
+        max_len = max((len(str(cell.value or "")) for cell in col), default=0)
+        ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 55)
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    period = imp["period_label"] or imp["filename"]
+    safe = re.sub(r"[^\w\-]", "_", period)
+    from flask import send_file
+    return send_file(
+        buf, as_attachment=True,
+        download_name=f"{title_suffix}_{safe}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@app.route("/timesheets/export/no-mine")
+@login_required
+def ts_export_no_mine():
+    import_id = request.args.get("import_id", type=int)
+    if not import_id:
+        flash("Выберите период для выгрузки", "error")
+        return redirect(url_for("timesheets"))
+    return _ts_export_block(import_id, "no-mine")
+
+
+@app.route("/timesheets/export/less-mine")
+@login_required
+def ts_export_less_mine():
+    import_id = request.args.get("import_id", type=int)
+    if not import_id:
+        flash("Выберите период для выгрузки", "error")
+        return redirect(url_for("timesheets"))
+    return _ts_export_block(import_id, "less-mine")
+
+
 if __name__ == "__main__":
     init_db()
     app.run(host="127.0.0.1", port=5000, debug=True)
