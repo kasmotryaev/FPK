@@ -80,14 +80,16 @@ DPA_DUE_CATEGORIES = [
 
 # Постоянная очередь изменений (row_events), не привязанная к одной загрузке: три вкладки
 TAB_EVENT_TYPES = {
-    "new": ("new", "reactivated"),
+    "new":    ("new", "reactivated"),
     "closed": ("zeroed", "deactivated"),
-    "other": ("amount_changed", "field_changed"),
+    "fact":   ("portfolio_changed",),
+    "other":  ("amount_changed", "field_changed"),
 }
 TAB_LABELS = {
-    "new": "Новые статьи",
+    "new":    "Новые статьи",
     "closed": "Закрытые / обнулённые",
-    "other": "Прочие изменения",
+    "fact":   "Перешло в Факт",
+    "other":  "Прочие изменения",
 }
 
 # ---------- Чат «Спросить портал»: данные для ИИ + запасной поиск без ИИ ----------
