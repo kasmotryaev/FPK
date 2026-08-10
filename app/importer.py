@@ -477,6 +477,44 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
                 section=row["section"], portfolio=row["portfolio"], contract_num=row["contract_num"],
             ))
 
+    # Детектируем переход портфеля 0-100/Возможности → Факт для одной и той же строки.
+    # Без этого пользователь видит два несвязанных события: «Пропала» + «Новая».
+    FORECAST_PORTFOLIOS = {"0-100", "Возможности"}
+    new_by_key = {}
+    for ev in pending_events:
+        if ev["event_type"] == "new":
+            k = (ev["month"], ev["client_name"], ev["project_name"], ev["section"])
+            new_by_key[k] = ev
+
+    skip_ids = set()
+    portfolio_changed_events = []
+    for ev in pending_events:
+        if ev["event_type"] == "deactivated" and (ev.get("portfolio") or "") in FORECAST_PORTFOLIOS:
+            k = (ev["month"], ev["client_name"], ev["project_name"], ev["section"])
+            new_ev = new_by_key.get(k)
+            if new_ev and (new_ev.get("portfolio") or "") == "Факт":
+                skip_ids.add(id(ev))
+                skip_ids.add(id(new_ev))
+                del new_by_key[k]  # не допускаем двойного матчинга
+                portfolio_changed_events.append(dict(
+                    fp_row_id=new_ev["fp_row_id"],
+                    event_type="portfolio_changed",
+                    field_label="portfolio",
+                    old_value=ev["portfolio"],
+                    new_value=new_ev["portfolio"],
+                    amount_before=ev["amount_before"],
+                    amount_after=new_ev["amount_after"],
+                    month=ev["month"],
+                    client_name=ev["client_name"],
+                    project_name=ev["project_name"],
+                    section=ev["section"],
+                    portfolio=new_ev["portfolio"],
+                    contract_num=ev["contract_num"],
+                ))
+    if skip_ids:
+        pending_events = [ev for ev in pending_events if id(ev) not in skip_ids]
+        pending_events.extend(portfolio_changed_events)
+
     diff_payload = {
         "new": diff_new[:200],
         "changed": diff_changed[:200],
