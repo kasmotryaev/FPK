@@ -10,7 +10,7 @@
 </div>
 
 <div class="tabs">
-  {% for key in ['new', 'closed', 'other'] %}
+  {% for key in ['new', 'closed', 'fact', 'other'] %}
     <a href="{{ url_for('changes_view', tab=key, show=('all' if show_all else None), import_log_id=(filter_import_log_id or None), section=filter_sections, sort=sort_by) }}" class="{{ 'active' if tab == key }}">
       {{ tab_labels[key] }}
       {% if counts[key] %}<span class="tag {{ 'tag-warn' if not tab == key else '' }}" style="margin-left:6px; {{ 'background:rgba(255,255,255,0.2); color:#fff;' if tab == key }}">{{ counts[key] }}</span>{% endif %}
@@ -161,6 +161,10 @@
                 {{ "{:,.0f}".format(e.amount_before or 0).replace(',', ' ') }} → <strong>{{ "{:,.0f}".format(e.amount_after or 0).replace(',', ' ') }} ₽</strong>
               {% elif e.event_type == 'portfolio_changed' %}
                 <span class="tag tag-ok">Перешло в Факт</span>
+                <span class="muted">{{ e.old_value }}</span> → <strong>{{ e.new_value }}</strong>
+                · <strong>{{ "{:,.0f}".format(e.amount_after or 0).replace(',', ' ') }} ₽</strong>
+              {% elif e.event_type == 'month_changed' %}
+                <span class="tag tag-warn">Месяц изменился</span>
                 <span class="muted">{{ e.old_value }}</span> → <strong>{{ e.new_value }}</strong>
                 · <strong>{{ "{:,.0f}".format(e.amount_after or 0).replace(',', ' ') }} ₽</strong>
               {% else %}

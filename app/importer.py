@@ -308,7 +308,15 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
                 if cf["key"] == "amount_0_100":
                     old_amt = existing["amount_0_100"] or 0.0
                     new_amt = data["amount_0_100"] or 0.0
-                    ev_type = "zeroed" if (abs(new_amt) <= 0.01 and old_amt > 0.01) else "amount_changed"
+                    if abs(new_amt) <= 0.01 and old_amt > 0.01:
+                        # Сумма обнулилась — всегда показываем
+                        ev_type = "zeroed"
+                    elif round(old_amt) == round(new_amt):
+                        # Погрешность в пределах рубля — событие не создаём,
+                        # но значение в БД всё равно обновится (UPDATE выполняется ниже)
+                        continue
+                    else:
+                        ev_type = "amount_changed"
                     pending_events.append(dict(
                         fp_row_id=existing["id"], event_type=ev_type,
                         field_label=None, old_value=None, new_value=None,
@@ -514,6 +522,46 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
     if skip_ids:
         pending_events = [ev for ev in pending_events if id(ev) not in skip_ids]
         pending_events.extend(portfolio_changed_events)
+
+    # Детектируем смену месяца: та же логика, что portfolio_changed.
+    # «Пропала» + «Новая» с одинаковыми client/project/section/portfolio но разными месяцами
+    # и близкими суммами → одно событие «Месяц изменился» вместо двух несвязанных событий.
+    new_by_identity = {}
+    for ev in pending_events:
+        if ev["event_type"] == "new":
+            k = (ev["client_name"], ev["project_name"], ev["section"], ev.get("portfolio") or "")
+            new_by_identity[k] = ev
+
+    month_skip_ids = set()
+    month_changed_events = []
+    for ev in pending_events:
+        if ev["event_type"] == "deactivated":
+            k = (ev["client_name"], ev["project_name"], ev["section"], ev.get("portfolio") or "")
+            new_ev = new_by_identity.get(k)
+            if new_ev and ev.get("month") != new_ev.get("month"):
+                # Суммы должны совпадать с допуском 1 рубль
+                if abs((ev["amount_before"] or 0) - (new_ev["amount_after"] or 0)) <= 1.0:
+                    month_skip_ids.add(id(ev))
+                    month_skip_ids.add(id(new_ev))
+                    del new_by_identity[k]
+                    month_changed_events.append(dict(
+                        fp_row_id=new_ev["fp_row_id"],
+                        event_type="month_changed",
+                        field_label="month",
+                        old_value=ev.get("month"),
+                        new_value=new_ev.get("month"),
+                        amount_before=ev["amount_before"],
+                        amount_after=new_ev["amount_after"],
+                        month=new_ev.get("month"),
+                        client_name=ev["client_name"],
+                        project_name=ev["project_name"],
+                        section=ev["section"],
+                        portfolio=ev.get("portfolio") or new_ev.get("portfolio"),
+                        contract_num=ev.get("contract_num"),
+                    ))
+    if month_skip_ids:
+        pending_events = [ev for ev in pending_events if id(ev) not in month_skip_ids]
+        pending_events.extend(month_changed_events)
 
     diff_payload = {
         "new": diff_new[:200],

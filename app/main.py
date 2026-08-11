@@ -83,7 +83,7 @@ TAB_EVENT_TYPES = {
     "new":    ("new", "reactivated"),
     "closed": ("zeroed", "deactivated"),
     "fact":   ("portfolio_changed",),
-    "other":  ("amount_changed", "field_changed"),
+    "other":  ("amount_changed", "field_changed", "month_changed"),
 }
 TAB_LABELS = {
     "new":    "Новые статьи",
