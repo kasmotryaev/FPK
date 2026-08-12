@@ -3654,30 +3654,37 @@ def timesheets():
 
         import_emp_names = {r["employee"].upper() for r in rows if r["employee"]}
 
-        # Классифицируем проекты: мои vs чужие (только из rows_main)
+        # Классифицируем задачи: мои vs чужие (только из rows_main).
+        # Ключ — задача (task), а не проект: это исключает ситуацию, когда Плевако
+        # работает только на своих задачах внутри проекта, а чужие — на других задачах
+        # того же проекта. При проектной классификации все задачи Плевако попадали в
+        # «Мои меньше чужих» даже без конкурирующих списаний на его конкретных задачах.
         if emp_names:
-            proj_mine   = {}
-            proj_others = {}
+            task_mine   = {}
+            task_others = {}
             for r in rows_main:
                 emp_up = (r["employee"] or "—").upper()
-                proj   = r["project"] or "—"
-                proj_mine.setdefault(proj, 0.0)
-                proj_others.setdefault(proj, 0.0)
+                task   = r["task"] or r["project"] or "—"
+                task_mine.setdefault(task, 0.0)
+                task_others.setdefault(task, 0.0)
                 if emp_up in emp_names:
-                    proj_mine[proj]   += r["hours"]
+                    task_mine[task]   += r["hours"]
                 else:
-                    proj_others[proj] += r["hours"]
+                    task_others[task] += r["hours"]
 
-            # Блок 2: проекты без моих сотрудников
-            no_mine_projs = {p for p in proj_others if proj_mine.get(p, 0) == 0 and proj_others[p] > 0}
-            # Блок 3: мои > 0, но мои < чужих
-            less_mine_projs = {
-                p for p in proj_mine
-                if proj_mine[p] > 0 and proj_mine[p] < proj_others.get(p, 0)
+            def _tkey(r):
+                return r["task"] or r["project"] or "—"
+
+            # Блок 2: задачи без моих сотрудников
+            no_mine_tasks = {t for t in task_others if task_mine.get(t, 0) == 0 and task_others[t] > 0}
+            # Блок 3: мои > 0, но мои < чужих — на уровне конкретной задачи
+            less_mine_tasks = {
+                t for t in task_mine
+                if task_mine[t] > 0 and task_mine[t] < task_others.get(t, 0)
             }
 
-            rows_no_mine   = [r for r in rows_main if (r["project"] or "—") in no_mine_projs]
-            rows_less_mine = [r for r in rows_main if (r["project"] or "—") in less_mine_projs]
+            rows_no_mine   = [r for r in rows_main if _tkey(r) in no_mine_tasks]
+            rows_less_mine = [r for r in rows_main if _tkey(r) in less_mine_tasks]
             hierarchy_no_mine,   hours_no_mine   = _ts_build_hierarchy(rows_no_mine,   emp_names)
             hierarchy_less_mine, hours_less_mine = _ts_build_hierarchy(rows_less_mine, emp_names)
 
@@ -4234,31 +4241,35 @@ def _ts_export_block(import_id, filter_type):
     else:
         rows_main = all_rows
 
-    # Считаем часы по проектам (мои vs чужие)
-    proj_mine, proj_others = {}, {}
+    # Считаем часы по задачам (мои vs чужие) — классификация на уровне задачи,
+    # а не проекта, чтобы не включать задачи, где конкурирующих списаний нет.
+    task_mine, task_others = {}, {}
     for r in rows_main:
         emp_up = (r["employee"] or "—").upper()
-        proj = r["project"] or "—"
-        proj_mine.setdefault(proj, 0.0)
-        proj_others.setdefault(proj, 0.0)
+        task = r["task"] or r["project"] or "—"
+        task_mine.setdefault(task, 0.0)
+        task_others.setdefault(task, 0.0)
         if emp_up in emp_names:
-            proj_mine[proj] += r["hours"]
+            task_mine[task] += r["hours"]
         else:
-            proj_others[proj] += r["hours"]
+            task_others[task] += r["hours"]
+
+    def _tkey(r):
+        return r["task"] or r["project"] or "—"
 
     if filter_type == "no-mine":
-        target_projs = {p for p in proj_others if proj_mine.get(p, 0) == 0 and proj_others[p] > 0}
+        target_tasks = {t for t in task_others if task_mine.get(t, 0) == 0 and task_others[t] > 0}
         title_suffix = "bez_moikh"
         sheet_title = "Без моих сотрудников"
     else:  # less-mine
-        target_projs = {
-            p for p in proj_mine
-            if proj_mine[p] > 0 and proj_mine[p] < proj_others.get(p, 0)
+        target_tasks = {
+            t for t in task_mine
+            if task_mine[t] > 0 and task_mine[t] < task_others.get(t, 0)
         }
         title_suffix = "moi_menshe"
         sheet_title = "Мои меньше чужих"
 
-    export_rows = [r for r in rows_main if (r["project"] or "—") in target_projs]
+    export_rows = [r for r in rows_main if _tkey(r) in target_tasks]
 
     # Агрегация по (задача, сотрудник): суммируем часы при совпадении
     # Если задача пустая — берём project_type ("Тип источника ПЦ")
@@ -4271,8 +4282,12 @@ def _ts_export_block(import_id, filter_type):
             agg[key] = {"task": task_val, "employee": emp_val, "hours": 0.0, "dept": r["dept"]}
         agg[key]["hours"] += r["hours"]
 
-    # Сортировка по убыванию часов
-    agg_rows = sorted(agg.values(), key=lambda x: -x["hours"])
+    # Группировка по задаче: задачи сортируются по суммарным часам (убыванием),
+    # внутри каждой группы — по часам сотрудника (убыванием)
+    task_totals: dict = {}
+    for item in agg.values():
+        task_totals[item["task"]] = task_totals.get(item["task"], 0.0) + item["hours"]
+    agg_rows = sorted(agg.values(), key=lambda x: (-task_totals[x["task"]], -x["hours"]))
 
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
@@ -4282,22 +4297,44 @@ def _ts_export_block(import_id, filter_type):
     ws = wb.active
     ws.title = sheet_title[:31]
 
-    headers = ["Задача", "ФИО сотрудника", "Часы", "Департамент"]
+    def _rms_num(text):
+        """Первые 7 цифр из текста задачи — номер задачи в RMS."""
+        m = re.search(r"\d{7}", text or "")
+        return m.group(0) if m else ""
+
+    # Чередующиеся цвета фона для визуального разделения групп задач:
+    # белый и насыщенный голубой — только два цвета, без радуги
+    _TASK_FILLS = [
+        PatternFill(fill_type="solid", fgColor="FFFFFF"),  # белый
+        PatternFill(fill_type="solid", fgColor="BDD7EE"),  # голубой (Excel-стиль)
+    ]
+
+    headers = ["Задача", "Номер задачи RMS", "ФИО сотрудника", "Часы", "Департамент"]
     for col, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=h)
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill(fill_type="solid", fgColor="2563A8")
 
+    task_color_idx: dict = {}
+    color_counter = 0
     for i, row_data in enumerate(agg_rows, 2):
+        task_key = row_data["task"]
+        if task_key not in task_color_idx:
+            task_color_idx[task_key] = color_counter % len(_TASK_FILLS)
+            color_counter += 1
+        row_fill = _TASK_FILLS[task_color_idx[task_key]]
+        for col in range(1, 6):
+            ws.cell(row=i, column=col).fill = row_fill
         ws.cell(row=i, column=1, value=row_data["task"])
-        ws.cell(row=i, column=2, value=row_data["employee"])
-        ws.cell(row=i, column=3, value=row_data["hours"])
-        ws.cell(row=i, column=4, value=row_data["dept"])
+        ws.cell(row=i, column=2, value=_rms_num(row_data["task"]))
+        ws.cell(row=i, column=3, value=row_data["employee"])
+        ws.cell(row=i, column=4, value=row_data["hours"])
+        ws.cell(row=i, column=5, value=row_data["dept"])
 
     # Итоговая строка
     total_row = len(agg_rows) + 2
     ws.cell(row=total_row, column=1, value="Итого").font = Font(bold=True)
-    ws.cell(row=total_row, column=3, value=sum(r["hours"] for r in agg_rows)).font = Font(bold=True)
+    ws.cell(row=total_row, column=4, value=sum(r["hours"] for r in agg_rows)).font = Font(bold=True)
 
     for col in ws.columns:
         max_len = max((len(str(cell.value or "")) for cell in col), default=0)
