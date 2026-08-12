@@ -59,6 +59,81 @@ def _num(val):
         return 0.0
 
 
+def _normalized_identity_part(value):
+    """Normalize human-entered identity fields used for event reconciliation."""
+    return " ".join(str(value or "").split()).casefold()
+
+
+def _project_label(event):
+    """Build a readable project value for the change history."""
+    number = str(event.get("project_num") or "").strip()
+    name = str(event.get("project_name") or "").strip()
+    if number and name and number not in name:
+        return f"{number} - {name}"
+    return name or number or "-"
+
+
+def _collapse_project_moves(events):
+    """Replace matching new/deactivated pairs with one project-change event."""
+    new_events = [event for event in events if event["event_type"] == "new"]
+    deactivated_events = [event for event in events if event["event_type"] == "deactivated"]
+    candidates = []
+
+    for old_event in deactivated_events:
+        for new_event in new_events:
+            same_context = (
+                _normalized_identity_part(old_event.get("client_name"))
+                == _normalized_identity_part(new_event.get("client_name"))
+                and _normalized_identity_part(old_event.get("month"))
+                == _normalized_identity_part(new_event.get("month"))
+                and _normalized_identity_part(old_event.get("section"))
+                == _normalized_identity_part(new_event.get("section"))
+                and _normalized_identity_part(old_event.get("portfolio"))
+                == _normalized_identity_part(new_event.get("portfolio"))
+            )
+            if not same_context:
+                continue
+
+            old_project = _project_label(old_event)
+            new_project = _project_label(new_event)
+            if _normalized_identity_part(old_project) == _normalized_identity_part(new_project):
+                continue
+
+            amount_delta = abs(
+                (old_event.get("amount_before") or 0)
+                - (new_event.get("amount_after") or 0)
+            )
+            if amount_delta > 1.0:
+                continue
+
+            old_contract = _normalized_identity_part(old_event.get("contract_num"))
+            new_contract = _normalized_identity_part(new_event.get("contract_num"))
+            contract_mismatch = int(not old_contract or old_contract != new_contract)
+            candidates.append((contract_mismatch, amount_delta, old_event, new_event))
+
+    # Prefer exact contracts and closest amounts; consume each row only once.
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]["fp_row_id"], item[3]["fp_row_id"]))
+    consumed_ids = set()
+    project_changed_events = []
+    for _, _, old_event, new_event in candidates:
+        if id(old_event) in consumed_ids or id(new_event) in consumed_ids:
+            continue
+        consumed_ids.update((id(old_event), id(new_event)))
+        project_changed_events.append(dict(
+            fp_row_id=new_event["fp_row_id"], event_type="field_changed",
+            field_label="\u041f\u0440\u043e\u0435\u043a\u0442 \u0438\u0437\u043c\u0435\u043d\u0438\u043b\u0441\u044f",
+            old_value=_project_label(old_event), new_value=_project_label(new_event),
+            amount_before=old_event["amount_before"], amount_after=new_event["amount_after"],
+            month=new_event.get("month"), client_name=new_event.get("client_name"),
+            project_name=new_event.get("project_name"), section=new_event.get("section"),
+            portfolio=new_event.get("portfolio"), contract_num=new_event.get("contract_num"),
+        ))
+
+    if not consumed_ids:
+        return events
+    return [event for event in events if id(event) not in consumed_ids] + project_changed_events
+
+
 def _build_col_map(ws):
     """Строит маппинг «имя заголовка → номер столбца (1-based)» по первой строке файла."""
     col_map = {}
@@ -390,7 +465,7 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
                 fp_row_id=new_id, event_type="new",
                 field_label=None, old_value=None, new_value=None,
                 amount_before=None, amount_after=data["amount_0_100"] or 0.0,
-                month=month, client_name=client, project_name=proj_name,
+                month=month, client_name=client, project_num=proj_num, project_name=proj_name,
                 section=section, portfolio=portfolio, contract_num=contract,
             ))
 
@@ -462,7 +537,7 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
     # ВАЖНО: деактивируем ТОЛЬКО строки того квартала, который сейчас загружается.
     # Строки других кварталов не трогаем — у каждого квартала свой независимый снимок данных.
     cur.execute("""
-        SELECT id, row_key, month, client_name, project_name, section, portfolio,
+        SELECT id, row_key, month, client_name, project_num, project_name, section, portfolio,
                contract_num, amount_0_100 FROM fp_rows
         WHERE is_active = 1
           AND (quarter_label = ? OR quarter_label IS NULL OR quarter_label = '')
@@ -481,7 +556,7 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
                 fp_row_id=row["id"], event_type="deactivated",
                 field_label=None, old_value=None, new_value=None,
                 amount_before=row["amount_0_100"] or 0.0, amount_after=0.0,
-                month=row["month"], client_name=row["client_name"], project_name=row["project_name"],
+                month=row["month"], client_name=row["client_name"], project_num=row["project_num"], project_name=row["project_name"],
                 section=row["section"], portfolio=row["portfolio"], contract_num=row["contract_num"],
             ))
 
@@ -562,6 +637,9 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
     if month_skip_ids:
         pending_events = [ev for ev in pending_events if id(ev) not in month_skip_ids]
         pending_events.extend(month_changed_events)
+
+    # Show a same-bank amount transfer as one project change, not new/deactivated.
+    pending_events = _collapse_project_moves(pending_events)
 
     diff_payload = {
         "new": diff_new[:200],
