@@ -73,6 +73,75 @@ def _project_label(event):
     return name or number or "-"
 
 
+def _collapse_portfolio_changes(events):
+    """Collapse a forecast/new pair even when its month changed at the same time."""
+    forecast_portfolios = {"0-100", "\u0412\u043e\u0437\u043c\u043e\u0436\u043d\u043e\u0441\u0442\u0438"}
+    fact_portfolio = "\u0424\u0430\u043a\u0442"
+    new_events = [
+        event for event in events
+        if event["event_type"] == "new" and (event.get("portfolio") or "") == fact_portfolio
+    ]
+    deactivated_events = [
+        event for event in events
+        if event["event_type"] == "deactivated"
+        and (event.get("portfolio") or "") in forecast_portfolios
+    ]
+    candidates = []
+
+    for old_event in deactivated_events:
+        for new_event in new_events:
+            same_identity = (
+                _normalized_identity_part(old_event.get("client_name"))
+                == _normalized_identity_part(new_event.get("client_name"))
+                and _normalized_identity_part(_project_label(old_event))
+                == _normalized_identity_part(_project_label(new_event))
+                and _normalized_identity_part(old_event.get("section"))
+                == _normalized_identity_part(new_event.get("section"))
+            )
+            if not same_identity:
+                continue
+
+            amount_delta = abs(
+                (old_event.get("amount_before") or 0)
+                - (new_event.get("amount_after") or 0)
+            )
+            if amount_delta > 1.0:
+                continue
+
+            old_contract = _normalized_identity_part(old_event.get("contract_num"))
+            new_contract = _normalized_identity_part(new_event.get("contract_num"))
+            contract_mismatch = int(not old_contract or old_contract != new_contract)
+            candidates.append((contract_mismatch, amount_delta, old_event, new_event))
+
+    # Prefer exact contracts and closest amounts; consume each row only once.
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]["fp_row_id"], item[3]["fp_row_id"]))
+    consumed_ids = set()
+    portfolio_changed_events = []
+    for _, _, old_event, new_event in candidates:
+        if id(old_event) in consumed_ids or id(new_event) in consumed_ids:
+            continue
+        consumed_ids.update((id(old_event), id(new_event)))
+        portfolio_changed_events.append(dict(
+            fp_row_id=new_event["fp_row_id"],
+            event_type="portfolio_changed",
+            field_label="portfolio",
+            old_value=old_event.get("portfolio"),
+            new_value=new_event.get("portfolio"),
+            amount_before=old_event.get("amount_before"),
+            amount_after=new_event.get("amount_after"),
+            month=new_event.get("month"),
+            client_name=new_event.get("client_name"),
+            project_name=new_event.get("project_name"),
+            section=new_event.get("section"),
+            portfolio=new_event.get("portfolio"),
+            contract_num=new_event.get("contract_num"),
+        ))
+
+    if not consumed_ids:
+        return events
+    return [event for event in events if id(event) not in consumed_ids] + portfolio_changed_events
+
+
 def _collapse_project_moves(events):
     """Replace matching new/deactivated pairs with one project-change event."""
     new_events = [event for event in events if event["event_type"] == "new"]
@@ -597,6 +666,9 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
     if skip_ids:
         pending_events = [ev for ev in pending_events if id(ev) not in skip_ids]
         pending_events.extend(portfolio_changed_events)
+
+    # Handle a portfolio transition that also changed month in the same import.
+    pending_events = _collapse_portfolio_changes(pending_events)
 
     # Детектируем смену месяца: та же логика, что portfolio_changed.
     # «Пропала» + «Новая» с одинаковыми client/project/section/portfolio но разными месяцами
