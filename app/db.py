@@ -360,7 +360,7 @@ def init_db():
         fp_row_id INTEGER NOT NULL REFERENCES fp_rows(id) ON DELETE CASCADE,
         import_log_id INTEGER REFERENCES import_log(id),
         event_type TEXT NOT NULL CHECK(event_type IN
-            ('new','zeroed','deactivated','reactivated','amount_changed','field_changed')),
+            ('new','zeroed','deactivated','reactivated','amount_changed','field_changed','portfolio_changed','month_changed')),
         field_label TEXT,
         old_value TEXT,
         new_value TEXT,
@@ -408,6 +408,66 @@ def init_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_obligations_fp_row ON obligations(fp_row_id)")
 
     conn.commit()
+
+    # SQLite cannot extend a CHECK constraint with ALTER TABLE. Rebuild legacy
+    # row_events tables so existing installations can store portfolio changes.
+    row_events_schema = cur.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'row_events'"
+    ).fetchone()
+    row_events_sql = (row_events_schema["sql"] or "") if row_events_schema else ""
+    if row_events_schema and (
+        "portfolio_changed" not in row_events_sql or "month_changed" not in row_events_sql
+    ):
+        conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            conn.execute("BEGIN")
+            cur.execute("ALTER TABLE row_events RENAME TO row_events_legacy")
+            cur.execute("""
+            CREATE TABLE row_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fp_row_id INTEGER NOT NULL REFERENCES fp_rows(id) ON DELETE CASCADE,
+                import_log_id INTEGER REFERENCES import_log(id),
+                event_type TEXT NOT NULL CHECK(event_type IN
+                    ('new','zeroed','deactivated','reactivated','amount_changed','field_changed','portfolio_changed','month_changed')),
+                field_label TEXT,
+                old_value TEXT,
+                new_value TEXT,
+                amount_before REAL,
+                amount_after REAL,
+                month TEXT,
+                client_name TEXT,
+                project_name TEXT,
+                section TEXT,
+                portfolio TEXT,
+                contract_num TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                reviewed_at TEXT,
+                reviewed_by INTEGER REFERENCES users(id)
+            )
+            """)
+            cur.execute("""
+                INSERT INTO row_events (
+                    id, fp_row_id, import_log_id, event_type, field_label,
+                    old_value, new_value, amount_before, amount_after, month,
+                    client_name, project_name, section, portfolio, contract_num,
+                    created_at, reviewed_at, reviewed_by
+                )
+                SELECT
+                    id, fp_row_id, import_log_id, event_type, field_label,
+                    old_value, new_value, amount_before, amount_after, month,
+                    client_name, project_name, section, portfolio, contract_num,
+                    created_at, reviewed_at, reviewed_by
+                FROM row_events_legacy
+            """)
+            cur.execute("DROP TABLE row_events_legacy")
+            cur.execute("CREATE INDEX idx_row_events_type_reviewed ON row_events(event_type, reviewed_at)")
+            cur.execute("CREATE INDEX idx_row_events_import ON row_events(import_log_id)")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
 
     # Миграция: добавляем diff_json в существующие старые базы, если его не было
     cols = [c["name"] for c in cur.execute("PRAGMA table_info(import_log)").fetchall()]
