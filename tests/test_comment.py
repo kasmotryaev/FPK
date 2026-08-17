@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS fp_rows       (id INTEGER PRIMARY KEY AUTOINCREMENT, 
 CREATE TABLE IF NOT EXISTS obligations   (id INTEGER PRIMARY KEY AUTOINCREMENT, fp_row_id INTEGER NOT NULL REFERENCES fp_rows(id), title TEXT NOT NULL, description TEXT DEFAULT '', responsible_type TEXT NOT NULL DEFAULT 'team_lead', responsible_name TEXT, due_date TEXT, status TEXT NOT NULL DEFAULT 'not_started', created_by INTEGER, completed_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS import_log    (id INTEGER PRIMARY KEY AUTOINCREMENT, filename TEXT, rows_total INTEGER DEFAULT 0, rows_new INTEGER DEFAULT 0, rows_updated INTEGER DEFAULT 0, rows_deactivated INTEGER DEFAULT 0, imported_by INTEGER, imported_at TEXT DEFAULT CURRENT_TIMESTAMP, diff_json TEXT);
 CREATE TABLE IF NOT EXISTS row_events    (id INTEGER PRIMARY KEY AUTOINCREMENT, fp_row_id INTEGER, import_log_id INTEGER, event_type TEXT, field_label TEXT, old_value TEXT, new_value TEXT, amount_before REAL, amount_after REAL, month TEXT, client_name TEXT, project_name TEXT, section TEXT, portfolio TEXT, contract_num TEXT, reviewed_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS import_money_snapshots (id INTEGER PRIMARY KEY AUTOINCREMENT, import_log_id INTEGER UNIQUE NOT NULL REFERENCES import_log(id), quarter_label TEXT NOT NULL, fact_amount REAL NOT NULL DEFAULT 0, plan_amount REAL NOT NULL DEFAULT 0, opportunities_amount REAL NOT NULL DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 """
 
 

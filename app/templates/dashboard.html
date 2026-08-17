@@ -226,7 +226,74 @@
       <div class="kpi-sub">незапланированные деньги при выполнении обязательств</div>
     </div>
   </div>
+
+  <details class="card money-chart-card" id="money-chart-details" open>
+    <summary class="money-chart-summary">
+      <div>
+        <div class="money-chart-title">Динамика сумм по загрузкам ФКП</div>
+        <div class="money-chart-subtitle">Каждая точка — состояние выбранного периода после загрузки файла. Ручная корректировка Факта не учитывается.</div>
+      </div>
+      <div class="money-chart-summary-actions">
+        {% if money_chart %}
+        <span class="money-chart-scale">Шкала: максимум периода · {{ money_chart.max_label }}</span>
+        {% endif %}
+        <span class="money-chart-toggle"></span>
+      </div>
+    </summary>
+    <div class="money-chart-body">
+      {% if money_chart %}
+      <div class="money-chart-legend">
+        {% for series in money_chart.series %}
+        <span><i style="background:{{ series.color }}"></i>{{ series.label }}</span>
+        {% endfor %}
+      </div>
+      <div class="money-chart-scroll">
+        <svg class="money-chart-svg" viewBox="0 0 {{ money_chart.width }} {{ money_chart.height }}"
+             role="img" aria-label="Динамика сумм по датам загрузок ФКП">
+          <text x="{{ money_chart.left }}" y="12" class="money-chart-axis-caption">Сумма, ₽</text>
+          {% for tick in money_chart.ticks %}
+          <line x1="{{ money_chart.left }}" y1="{{ tick.y }}" x2="{{ money_chart.width - money_chart.right }}" y2="{{ tick.y }}" class="money-chart-gridline"/>
+          <text x="{{ money_chart.left - 10 }}" y="{{ tick.y + 4 }}" text-anchor="end" class="money-chart-axis-label">{{ tick.label }}</text>
+          {% endfor %}
+          {% for point in money_chart.history %}
+            {% if loop.index0 in money_chart.label_indexes %}
+            <line x1="{{ point.x }}" y1="{{ money_chart.top }}" x2="{{ point.x }}" y2="{{ money_chart.top + money_chart.plot_height }}" class="money-chart-vgridline"/>
+            <text x="{{ point.x }}" y="{{ money_chart.height - 20 }}" text-anchor="middle" class="money-chart-axis-label">{{ point.date_label }}</text>
+            {% endif %}
+          {% endfor %}
+          {% for series in money_chart.series %}
+          <polyline points="{{ series.points }}" fill="none" stroke="{{ series.color }}" class="money-chart-series"/>
+            {% for point in money_chart.history %}
+            <circle cx="{{ point.x }}" cy="{{ point.series_y[series.key] }}" r="5" fill="{{ series.color }}" class="money-chart-point">
+              <title>{{ point.tooltip_date }} — {{ series.label }}: {{ "{:,.0f}".format(point[series.key]).replace(',', ' ') }} ₽</title>
+            </circle>
+            {% endfor %}
+          {% endfor %}
+          <text x="{{ money_chart.width / 2 }}" y="{{ money_chart.height - 3 }}" text-anchor="middle" class="money-chart-axis-caption">Дата загрузки файла ФКП</text>
+        </svg>
+      </div>
+      {% else %}
+      <div class="empty-state money-chart-empty">
+        История сумм начнёт накапливаться с первой загрузки файла ФКП после обновления приложения.
+      </div>
+      {% endif %}
+    </div>
+  </details>
 </div>
+
+<script>
+(function () {
+  var details = document.getElementById('money-chart-details');
+  if (!details) return;
+  var storageKey = 'fp_money_chart_open';
+  try {
+    if (localStorage.getItem(storageKey) === '0') details.removeAttribute('open');
+  } catch (e) {}
+  details.addEventListener('toggle', function () {
+    try { localStorage.setItem(storageKey, details.open ? '1' : '0'); } catch (e) {}
+  });
+})();
+</script>
 
 <div class="card section-block">
   <div class="section-title">К получению в ближайшие {{ dpa_due_window_days }} дня (по дате ДПА)</div>

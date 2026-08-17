@@ -239,6 +239,31 @@ def detect_header_mismatch(ws):
     return missing
 
 
+def _save_import_money_snapshot(cur, import_log_id, quarter_label):
+    """Сохраняет агрегированные суммы квартала после успешной загрузки файла."""
+    totals = {"Факт": 0.0, "0-100": 0.0, "Возможности": 0.0}
+    rows = cur.execute(
+        """
+        SELECT portfolio, SUM(COALESCE(amount_0_100, 0)) AS amount
+        FROM fp_rows
+        WHERE is_active = 1 AND quarter_label = ?
+          AND portfolio IN ('Факт', '0-100', 'Возможности')
+        GROUP BY portfolio
+        """,
+        (quarter_label,),
+    ).fetchall()
+    for row in rows:
+        totals[row["portfolio"]] = float(row["amount"] or 0)
+    cur.execute(
+        """
+        INSERT INTO import_money_snapshots
+            (import_log_id, quarter_label, fact_amount, plan_amount, opportunities_amount)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (import_log_id, quarter_label, totals["Факт"], totals["0-100"], totals["Возможности"]),
+    )
+
+
 def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None):
     wb = openpyxl.load_workbook(filepath, data_only=True)
     ws = wb[wb.sheetnames[0]]
@@ -727,6 +752,8 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
         VALUES (?,?,?,?,?,?,?)
     """, (filename, len(seen_keys), rows_new, rows_updated, rows_deactivated, user_id, json.dumps(diff_payload, ensure_ascii=False)))
     log_id = cur.lastrowid
+
+    _save_import_money_snapshot(cur, log_id, upload_ql)
 
     for ev in pending_events:
         cur.execute("""

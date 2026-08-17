@@ -341,6 +341,19 @@ def init_db():
     """)
 
     cur.execute("""
+    CREATE TABLE IF NOT EXISTS import_money_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        import_log_id INTEGER UNIQUE NOT NULL REFERENCES import_log(id) ON DELETE CASCADE,
+        quarter_label TEXT NOT NULL,
+        fact_amount REAL NOT NULL DEFAULT 0,
+        plan_amount REAL NOT NULL DEFAULT 0,
+        opportunities_amount REAL NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_import_money_snapshots_quarter ON import_money_snapshots(quarter_label, import_log_id)")
+
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS quarter_targets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         period_label TEXT UNIQUE NOT NULL,
