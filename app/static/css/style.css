@@ -346,6 +346,118 @@ a:hover { text-decoration: underline; }
 .kpi-value { font-family: var(--font-mono); font-size: 26px; font-weight: 700; color: var(--ink-900); margin-top: 6px; }
 .kpi-sub { font-size: 12px; color: var(--ink-500); margin-top: 4px; }
 
+.money-chart-card {
+  margin-top: 18px;
+  overflow: hidden;
+}
+.money-chart-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.money-chart-summary::-webkit-details-marker { display: none; }
+.money-chart-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-900);
+}
+.money-chart-subtitle {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--ink-500);
+}
+.money-chart-summary-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.money-chart-scale {
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink-500);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.money-chart-toggle {
+  min-width: 148px;
+  padding: 5px 9px;
+  border: 1px solid var(--ink-300);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink-700);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+.money-chart-toggle::before { content: "Свернуть график ▲"; }
+.money-chart-card:not([open]) .money-chart-toggle::before { content: "Развернуть график ▼"; }
+.money-chart-card:not([open]) .money-chart-scale { display: none; }
+.money-chart-body {
+  border-top: 1px solid var(--line);
+  padding: 10px 16px 14px;
+}
+.money-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px 18px;
+  padding: 0 0 4px;
+  color: var(--ink-700);
+  font-size: 11.5px;
+}
+.money-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.money-chart-legend i {
+  display: inline-block;
+  width: 20px;
+  height: 3px;
+  border-radius: 2px;
+}
+.money-chart-scroll { overflow-x: auto; }
+.money-chart-svg {
+  display: block;
+  width: 100%;
+  min-width: 720px;
+  height: auto;
+}
+.money-chart-gridline { stroke: var(--ink-100); stroke-width: 1; }
+.money-chart-vgridline { stroke: var(--line); stroke-width: 1; stroke-opacity: 0.45; }
+.money-chart-series {
+  stroke-width: 3;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.money-chart-point {
+  stroke: var(--card);
+  stroke-width: 2;
+}
+.money-chart-axis-label {
+  fill: var(--ink-500);
+  font-family: var(--font-ui);
+  font-size: 11px;
+}
+.money-chart-axis-caption {
+  fill: var(--ink-300);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.money-chart-empty { padding: 24px 10px; }
+
 .thermo {
   margin-top: 14px;
   height: 10px;
@@ -582,6 +694,9 @@ select.status-select { font-size: 12px; padding: 4px 8px; border-radius: 6px; fo
   .sidebar { display: none; }
   .grid-3, .grid-2 { grid-template-columns: 1fr; }
   .main { padding: 18px; }
+  .money-chart-summary { flex-direction: column; }
+  .money-chart-summary-actions { width: 100%; justify-content: space-between; flex-wrap: wrap; }
+  .money-chart-toggle { min-width: 142px; }
 }
 
 /* ═══════════════════════════════════════════════

@@ -1353,6 +1353,117 @@ def changelog():
 
 # ---------- Dashboard ----------
 
+MONEY_CHART_SERIES = (
+    ("fact", "Факт", "#1f8a52"),
+    ("fact_plan", "Факт + План 0-100", "#2563a8"),
+    ("plan", "0-100", "#69a4d8"),
+    ("opportunities", "Возможности", "#9aa6bd"),
+)
+
+
+def _format_chart_amount(value):
+    value = float(value or 0)
+    abs_value = abs(value)
+    if abs_value >= 1_000_000_000:
+        number, suffix = value / 1_000_000_000, "млрд"
+    elif abs_value >= 1_000_000:
+        number, suffix = value / 1_000_000, "млн"
+    elif abs_value >= 1_000:
+        number, suffix = value / 1_000, "тыс"
+    else:
+        return f"{value:,.0f}".replace(",", " ") + " ₽"
+    digits = 0 if abs(number) >= 10 or number.is_integer() else 1
+    return f"{number:.{digits}f}".replace(".", ",") + f" {suffix} ₽"
+
+
+def _get_money_history(conn, quarter_labels):
+    """Возвращает агрегированное состояние выбранного периода после каждой загрузки."""
+    if not quarter_labels:
+        return []
+    placeholders = ",".join("?" * len(quarter_labels))
+    rows = conn.execute(
+        f"""
+        SELECT s.quarter_label, s.fact_amount, s.plan_amount, s.opportunities_amount,
+               l.id AS import_log_id, l.imported_at
+        FROM import_money_snapshots s
+        JOIN import_log l ON l.id = s.import_log_id
+        WHERE s.quarter_label IN ({placeholders})
+        ORDER BY l.imported_at, l.id
+        """,
+        list(quarter_labels),
+    ).fetchall()
+    latest_by_quarter = {}
+    history = []
+    for row in rows:
+        latest_by_quarter[row["quarter_label"]] = {
+            "fact": float(row["fact_amount"] or 0),
+            "plan": float(row["plan_amount"] or 0),
+            "opportunities": float(row["opportunities_amount"] or 0),
+        }
+        fact = sum(v["fact"] for v in latest_by_quarter.values())
+        plan = sum(v["plan"] for v in latest_by_quarter.values())
+        opportunities = sum(v["opportunities"] for v in latest_by_quarter.values())
+        imported_at = row["imported_at"] or ""
+        try:
+            parsed = datetime.datetime.fromisoformat(imported_at)
+            date_label = parsed.strftime("%d.%m")
+            tooltip_date = parsed.strftime("%d.%m.%Y %H:%M")
+        except (TypeError, ValueError):
+            date_label = imported_at[:10] or "—"
+            tooltip_date = imported_at or "—"
+        history.append({
+            "import_log_id": row["import_log_id"],
+            "date_label": date_label,
+            "tooltip_date": tooltip_date,
+            "fact": fact,
+            "fact_plan": fact + plan,
+            "plan": plan,
+            "opportunities": opportunities,
+        })
+    return history
+
+
+def _prepare_money_chart(history):
+    if not history:
+        return None
+    width, height = 1200, 300
+    left, right, top, bottom = 92, 24, 18, 48
+    plot_width = width - left - right
+    plot_height = height - top - bottom
+    values = [point[key] for point in history for key, _label, _color in MONEY_CHART_SERIES]
+    y_min = min(0.0, min(values))
+    y_max = max(0.0, max(values))
+    if y_max == y_min:
+        y_max = y_min + 1.0
+    span = y_max - y_min
+    count = len(history)
+    for index, point in enumerate(history):
+        point["x"] = left + (plot_width / 2 if count == 1 else index * plot_width / (count - 1))
+        point["series_y"] = {
+            key: top + (y_max - point[key]) / span * plot_height
+            for key, _label, _color in MONEY_CHART_SERIES
+        }
+    label_step = max(1, (count + 5) // 6)
+    label_indexes = set(range(0, count, label_step)) | {count - 1}
+    ticks = []
+    for index in range(5):
+        value = y_max - span * index / 4
+        ticks.append({"y": top + plot_height * index / 4, "label": _format_chart_amount(value)})
+    series = []
+    for key, label, color in MONEY_CHART_SERIES:
+        series.append({
+            "key": key,
+            "label": label,
+            "color": color,
+            "points": " ".join(f'{point["x"]:.1f},{point["series_y"][key]:.1f}' for point in history),
+        })
+    return {
+        "width": width, "height": height, "left": left, "right": right,
+        "top": top, "bottom": bottom, "plot_height": plot_height,
+        "history": history, "series": series, "ticks": ticks,
+        "label_indexes": label_indexes, "max_label": _format_chart_amount(y_max),
+    }
+
 @app.route("/")
 @login_required
 def dashboard():
@@ -1547,6 +1658,8 @@ def dashboard():
     gap_after_0100 = (target_amount - summary.get("Факт", 0) - summary.get("0-100", 0)) if target_amount else None
     gap_after_opportunities = (target_amount - achieved) if target_amount else None
 
+    money_chart = _prepare_money_chart(_get_money_history(conn, vqls))
+
     conn.close()
     return render_template(
         "dashboard.html",
@@ -1571,6 +1684,7 @@ def dashboard():
         dpa_overdue_by_category=dpa_overdue_by_category, dpa_overdue_counts=dpa_overdue_counts,
         dpa_overdue_total=dpa_overdue_total, dpa_overdue_count_total=dpa_overdue_count_total,
         today_iso=today.isoformat(),
+        money_chart=money_chart,
     )
 
 
