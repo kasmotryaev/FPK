@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% block title %}Программа максимум — ФП‑Контроль{% endblock %}
+{% macro money(v) %}{{ "{:,.0f}".format(v or 0).replace(',', ' ') }} ₽{% endmacro %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1>Программа максимум</h1>
+    <div class="subtitle">
+      {% if imp %}
+        {{ imp.filename }} · загружено {{ imp.imported_at[:16] }} ·
+        строк файла {{ imp.source_rows }}
+      {% else %}
+        Файл ПМ ещё не загружен
+      {% endif %}
+    </div>
+  </div>
+  <a href="{{ url_for('dashboard') }}" class="btn btn-sm">← Общий дашборд</a>
+</div>
+
+{% if not imp %}
+<div class="card section-block">
+  <div class="section-title">Как это работает</div>
+  <p class="subtitle">
+    Программа максимум приходит из 1С («ПМ ПЦ_Решения к ДД.ММ.ГГГГ.xlsx», лист TDSheet) и содержит
+    деньги ПЦ в разрезе решений и кварталов. Портал раскладывает файл по кварталам и сравнивает
+    с финпланом из Ситуационного центра: ПМ «Прогноз» ↔ портфель «0‑100» того же квартала.
+    Квартальные колонки названы по финансовому году: <b>2FQ2026 — это календарный июль–сентябрь</b>
+    (2026‑Q3), 3FQ2026 — октябрь–декабрь (2026‑Q4).
+  </p>
+</div>
+{% endif %}
+
+{% if current_user_role == 'owner' %}
+<div class="card section-block">
+  <div class="section-title">Загрузить файл ПМ</div>
+  <form method="post" enctype="multipart/form-data" class="filters">
+    <input type="file" name="file" accept=".xlsx" required>
+    <input type="text" name="report_label" placeholder="Метка (например «к 24.08.2026»)" style="min-width:220px">
+    <button class="btn btn-primary" type="submit">Загрузить</button>
+  </form>
+  {% if imports and imports|length > 1 %}
+  <div class="subtitle" style="margin-top:10px">
+    Загрузки:
+    {% for i in imports %}
+      <a href="{{ url_for('pm_view', import_id=i.id) }}"{% if imp and i.id == imp.id %} style="font-weight:600"{% endif %}>{{ i.report_label or i.filename }}</a>{% if not loop.last %} · {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if imp %}
+<div class="card section-block">
+  <form method="get" class="filters">
+    <input type="hidden" name="import_id" value="{{ imp.id }}">
+    <label>Стратегическое решение
+      <input list="pm-strategic-list" type="text" name="strategic" value="{{ strategic }}" style="min-width:240px">
+      <datalist id="pm-strategic-list">
+        {% for s in strategic_list %}<option value="{{ s.name }}">{{ s.name }}</option>{% endfor %}
+      </datalist>
+    </label>
+    <label>Квартал
+      <select name="quarter">
+        {% for q in quarters %}
+          <option value="{{ q.quarter_label }}"{% if q.quarter_label == quarter %} selected{% endif %}>
+            {{ q.quarter_label }} ({{ q.fq_label }})
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Порог расхождения, ₽
+      <input type="number" name="threshold" value="{{ threshold|int }}" step="10000" style="width:120px">
+    </label>
+    <label>Смежные темы (через запятую)
+      <input type="text" name="related" value="{{ related }}" style="min-width:260px">
+    </label>
+    <button class="btn btn-primary" type="submit">Показать</button>
+  </form>
+  <div class="subtitle" style="margin-top:8px">
+    Фильтр ищет подстроку и в «Страт. решение», и в «Решение» — так в выборку попадают строки,
+    где стратегическое поле не заполнено, а продукт указан в названии решения.
+  </div>
+</div>
+
+<div class="card section-block">
+  <div class="section-title">Деньги ПМ по фильтру «{{ strategic or 'всё' }}»</div>
+  <div class="grid-4">
+    <div class="card kpi-tile" style="background:var(--fact-bg); border-color:var(--ok)">
+      <div class="kpi-label" style="color:var(--ok)">Факт</div>
+      <div class="kpi-value" style="color:var(--ok)">{{ money(summary.fact_total) }}</div>
+      <div class="kpi-sub">итого − прогноз</div>
+    </div>
+    {% for q in summary.quarters %}
+    <div class="card kpi-tile" style="background:var(--accent-bg); border-color:var(--accent)">
+      <div class="kpi-label" style="color:var(--accent)">Прогноз {{ q.quarter_label }}</div>
+      <div class="kpi-value" style="color:var(--accent)">{{ money(q.total) }}</div>
+      <div class="kpi-sub">{{ q.cnt }} строк</div>
+    </div>
+    {% endfor %}
+    <div class="card kpi-tile" style="background:var(--neutral-bg); border-color:var(--ink-300)">
+      <div class="kpi-label">Всего по ПМ</div>
+      <div class="kpi-value">{{ money(summary.grand_total) }}</div>
+      <div class="kpi-sub">факт + прогноз</div>
+    </div>
+  </div>
+</div>
+
+<div class="card section-block">
+  <div class="section-title">Разрезы квартала {{ quarter }}</div>
+  <div class="grid-2">
+    <div>
+      <table>
+        <thead><tr><th>Раздел ФП</th><th class="num">Сумма</th><th class="num">Строк</th></tr></thead>
+        <tbody>
+        {% for s in summary.sections %}
+          <tr><td>{{ s.section }}</td><td class="num">{{ money(s.total) }}</td><td class="num">{{ s.cnt }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <table>
+        <thead><tr><th>Менеджер УП</th><th class="num">Сумма</th></tr></thead>
+        <tbody>
+        {% for m in summary.managers %}
+          <tr><td>{{ m.manager }}</td><td class="num">{{ money(m.total) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card section-block">
+  <div class="section-title">Сверка с финпланом СЦ — {{ quarter }}</div>
+  {% if not fp_present %}
+    <p class="subtitle">
+      За квартал {{ quarter }} в портале нет строк финплана — сравнивать не с чем.
+      Загрузите выгрузку СЦ за этот квартал (Настройки → импорт) или переключите квартал выше.
+    </p>
+  {% else %}
+    <div class="subtitle" style="margin-bottom:10px">
+      ПМ «Прогноз» {{ money(delta_totals.pm) }} против «0‑100» финплана {{ money(delta_totals.fp) }}.
+      Расхождений выше порога: {{ status_totals.get('diff', 0) }},
+      только в ПМ: {{ status_totals.get('only_pm', 0) }},
+      только в финплане: {{ status_totals.get('only_fp', 0) }},
+      сходится: {{ status_totals.get('ok', 0) }}.
+      «Возможности» и «Факт» показаны для контекста и в дельту не входят.
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Клиент</th>
+          <th class="num">ПМ, прогноз</th>
+          <th class="num">ФП, 0‑100</th>
+          <th class="num">Δ</th>
+          <th class="num">ФП, возможности</th>
+          <th class="num">ФП, факт</th>
+          <th>Статус</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in comparison %}
+        <tr>
+          <td>
+            <a href="{{ url_for('pm_view', import_id=imp.id, strategic=strategic, quarter=quarter, threshold=threshold|int, client=r.client) }}">{{ r.client }}</a>
+          </td>
+          <td class="num">{{ money(r.pm_total) }}</td>
+          <td class="num">{{ money(r.fp_0_100) }}</td>
+          <td class="num" {% if r.status in ('diff','only_pm','only_fp') %}style="font-weight:600"{% endif %}>{{ money(r.delta) }}</td>
+          <td class="num">{{ money(r.fp_capability) }}</td>
+          <td class="num">{{ money(r.fp_fact) }}</td>
+          <td>
+            {% if r.status == 'diff' %}🔴 расхождение
+            {% elif r.status == 'only_pm' %}🟡 нет в финплане
+            {% elif r.status == 'only_fp' %}🟠 нет в ПМ
+            {% else %}🟢 сходится{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+</div>
+
+{% if selected_client %}
+<div class="card section-block">
+  <div class="section-title">{{ selected_client }} — строки ПМ за {{ quarter }}</div>
+  <table>
+    <thead>
+      <tr><th>Договор / пресейл</th><th>Раздел</th><th>Решение</th><th class="num">Сумма</th><th>Менеджер</th><th>КТ</th></tr>
+    </thead>
+    <tbody>
+    {% for d in details %}
+      <tr>
+        <td>{{ d.contract_num or '—' }}{% if d.presale %} <span class="subtitle">(пресейл {{ d.presale }})</span>{% endif %}</td>
+        <td>{{ d.section }}</td>
+        <td>{{ d.solution }}{% if d.strategic_solution and d.strategic_solution != d.solution %} <span class="subtitle">→ {{ d.strategic_solution }}</span>{% endif %}</td>
+        <td class="num">{{ money(d.amount) }}</td>
+        <td>{{ d.manager }}</td>
+        <td>{{ d.kt }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="card section-block">
+  <div class="section-title">Деньги наших клиентов под другими решениями — {{ quarter }}</div>
+  <div class="subtitle" style="margin-bottom:10px">
+    Строки тех же клиентов, которые не попали в фильтр «{{ strategic }}»: отнесены на соседний
+    продукт или остались без стратегического решения. Показываем все строки без стратрешения
+    и те, где название решения содержит слово из списка «смежные темы» — иначе блок утонул бы
+    в ядре, платежах и отчётности тех же банков.
+  </div>
+  {% if others %}
+  <table>
+    <thead><tr><th>Клиент</th><th>Стратегическое решение</th><th>Решение</th><th>Пресейл</th><th class="num">Сумма</th></tr></thead>
+    <tbody>
+    {% for o in others %}
+      <tr>
+        <td>{{ o.client }}</td>
+        <td>{{ o.strategic }}</td>
+        <td>{{ o.solution }}</td>
+        <td>{{ o.presale }}</td>
+        <td class="num">{{ money(o.total) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="subtitle">Ничего не найдено — все деньги этих клиентов лежат внутри фильтра.</p>
+  {% endif %}
+</div>
+
+{% if current_user_role == 'owner' %}
+<form method="post" action="{{ url_for('pm_delete', import_id=imp.id) }}"
+      onsubmit="return confirm('Удалить эту загрузку ПМ?');">
+  <button class="btn btn-sm" type="submit">Удалить загрузку</button>
+</form>
+{% endif %}
+{% endif %}
+
+{% endblock %}

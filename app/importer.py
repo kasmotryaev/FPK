@@ -31,6 +31,7 @@ TRACKED_FIELDS = [
     ("fdz_date", "фДЗ"),
     ("crm_amount", "Сумма из CRM"),
     ("project_manager", "Менеджер проекта"),
+    ("strategic_solution", "Стратегическое решение"),
 ]
 
 
@@ -389,8 +390,11 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
         note         = g("Примечание")
         portfolio    = g("Портфель")
         kolodec      = g("Колодец")
+        # «Стратегическое решение» — блок стратегии, к которому отнесена статья ФП
+        # (например «Решение А»). В старом формате файла колонки нет — тогда None.
+        strategic    = g("Стратегическое решение")
         # Новые колонки (пока не используются в БД, но не вызывают ошибок)
-        # g("Стратегическое решение"), g("РП"), g("Внешний ID клиента")
+        # g("РП"), g("Внешний ID клиента")
 
         if all(v is None or v == "" for v in (month, client, proj_num, section, amount_0_100, portfolio)):
             continue
@@ -422,8 +426,8 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
             sdz_date=_parse_date(sdz), dpa_date=_parse_date(dpa), fdz_date=_parse_date(fdz),
             accounting_entity=accounting, mp_0_100=int(mp_0_100) if mp_0_100 not in (None, "") else None,
             mp_comment=mp_comment, crm_amount=_num(crm_amount), amount_0_100=_num(amount_0_100),
-            note=note, portfolio=portfolio, kolodec=kolodec, is_active=1,
-            quarter_label=upload_ql,
+            note=note, portfolio=portfolio, kolodec=kolodec, strategic_solution=strategic,
+            is_active=1, quarter_label=upload_ql,
         )
 
         if existing:
@@ -491,7 +495,8 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
                     contract_num=:contract_num, ez_num=:ez_num, sdz_date=:sdz_date, dpa_date=:dpa_date,
                     fdz_date=:fdz_date, accounting_entity=:accounting_entity, mp_0_100=:mp_0_100,
                     mp_comment=:mp_comment, crm_amount=:crm_amount, amount_0_100=:amount_0_100,
-                    note=:note, portfolio=:portfolio, kolodec=:kolodec, is_active=1,
+                    note=:note, portfolio=:portfolio, kolodec=:kolodec,
+                    strategic_solution=:strategic_solution, is_active=1,
                     quarter_label=:quarter_label, last_seen_at=CURRENT_TIMESTAMP
                 WHERE row_key=:row_key
             """, data)
@@ -508,12 +513,12 @@ def import_excel(filepath, filename, user_id, quarter_label=None, rp_filter=None
             cur.execute("""
                 INSERT INTO fp_rows (row_key, month, pc, section, client_name, project_num, project_name,
                     project_manager, contract_num, ez_num, sdz_date, dpa_date, fdz_date, accounting_entity,
-                    mp_0_100, mp_comment, crm_amount, amount_0_100, note, portfolio, kolodec, is_active,
-                    quarter_label)
+                    mp_0_100, mp_comment, crm_amount, amount_0_100, note, portfolio, kolodec,
+                    strategic_solution, is_active, quarter_label)
                 VALUES (:row_key, :month, :pc, :section, :client_name, :project_num, :project_name,
                     :project_manager, :contract_num, :ez_num, :sdz_date, :dpa_date, :fdz_date,
                     :accounting_entity, :mp_0_100, :mp_comment, :crm_amount, :amount_0_100, :note,
-                    :portfolio, :kolodec, 1, :quarter_label)
+                    :portfolio, :kolodec, :strategic_solution, 1, :quarter_label)
             """, data)
             new_id = cur.lastrowid
             # Автозаполнение комментария из полей файла МП, если пользователь ещё не добавил своё.

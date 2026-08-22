@@ -96,6 +96,21 @@
     </div>
   </details>
 
+  {% if strategics %}
+  <details class="popover">
+    <summary>Блок стратегии: {{ ms_summary(filters.strategic, 'все') }}</summary>
+    <div class="popover-panel">
+      <input type="text" class="popover-search" placeholder="Поиск решения…" oninput="filterPopoverOptions(this)" onkeydown="if (event.key === 'Enter') event.preventDefault();">
+      <div class="popover-options">
+      {% for s in strategics %}
+        <label><input type="checkbox" name="strategic" value="{{ s }}" {{ 'checked' if s in filters.strategic }}> {{ s }}</label>
+      {% endfor %}
+      </div>
+      <div class="popover-actions"><button class="btn btn-sm btn-primary" type="submit">Применить</button></div>
+    </div>
+  </details>
+  {% endif %}
+
   <input type="text" name="q" placeholder="Поиск: клиент / проект / договор" value="{{ filters.q }}">
   <label><input type="checkbox" name="unassigned" value="1" {{ 'checked' if filters.unassigned }}> Только без оформленного обязательства</label>
 

@@ -22,6 +22,7 @@
           <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint == 'dashboard' }}"><span class="nav-icon">📊</span>Дашборд</a>
           <a href="{{ url_for('zd_dashboard') }}" class="{{ 'active' if request.endpoint == 'zd_dashboard' }}"><span class="nav-icon">🔧</span>Заказные доработки</a>
           <a href="{{ url_for('rows_list') }}" class="{{ 'active' if request.endpoint == 'rows_list' }}"><span class="nav-icon">📋</span>Детализация</a>
+          <a href="{{ url_for('pm_view') }}" class="{{ 'active' if request.endpoint == 'pm_view' }}"><span class="nav-icon">🎯</span>Программа максимум</a>
           <a href="{{ url_for('my_obligations') }}" class="{{ 'active' if request.endpoint == 'my_obligations' }}"><span class="nav-icon">✅</span>Мои обязательства</a>
           <a href="{{ url_for('archive_view') }}" class="{{ 'active' if request.endpoint == 'archive_view' }}"><span class="nav-icon">🗂</span>Архив кварталов</a>
           {% if current_user_role == 'owner' %}
@@ -150,6 +151,35 @@
     try { localStorage.setItem(THEME_KEY, !isDark ? 'dark' : ''); } catch(e) {}
   };
   try { pgThemeApply(localStorage.getItem(THEME_KEY) === 'dark'); } catch(e) {}
+
+  // ── Денежные поля: разряды по три цифры прямо при вводе (class="js-amount") ──
+  // На сервер уходит строка с пробелами — обработчики сумм их вычищают.
+  function amtGroup(digits) {
+    return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  }
+  function amtApply(input) {
+    var before = input.value;
+    var caret = input.selectionStart === null ? before.length : input.selectionStart;
+    var digitsLeft = (before.slice(0, caret).match(/\d/g) || []).length;
+    var negative = before.trim().charAt(0) === '-';
+    var digits = before.replace(/\D/g, '');
+    var formatted = digits ? (negative ? '-' : '') + amtGroup(digits) : (negative ? '-' : '');
+    if (formatted === before) return;
+    input.value = formatted;
+    if (input.setSelectionRange) {
+      var pos = 0, seen = 0;
+      while (pos < formatted.length && seen < digitsLeft) {
+        if (/\d/.test(formatted.charAt(pos))) seen++;
+        pos++;
+      }
+      try { input.setSelectionRange(pos, pos); } catch (e) {}
+    }
+  }
+  document.addEventListener('input', function (e) {
+    var el = e.target;
+    if (el && el.classList && el.classList.contains('js-amount')) amtApply(el);
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.js-amount'), amtApply);
 })();
 </script>
 </body>
