@@ -277,6 +277,7 @@ def init_db():
         note TEXT,
         portfolio TEXT,
         kolodec TEXT,
+        strategic_solution TEXT,
         is_active INTEGER DEFAULT 1,
         first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
         last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -507,6 +508,12 @@ def init_db():
         if get_setting(conn, "current_quarter_label") is None:
             set_setting(conn, "current_quarter_label", current_label)
             conn.commit()
+    if "strategic_solution" not in cols_fp:
+        # «Стратегическое решение» есть в выгрузке ФП, но до этой миграции не сохранялось.
+        # Старые строки останутся без значения — оно проставится при следующей загрузке файла,
+        # в котором эта колонка присутствует.
+        cur.execute("ALTER TABLE fp_rows ADD COLUMN strategic_solution TEXT")
+        conn.commit()
 
     # Миграция row_key v2: включаем quarter_label в хэш, чтобы одни и те же строки в разных
     # кварталах не коллидировали по UNIQUE(row_key). Пересчитываем ключи всех существующих строк.
@@ -590,6 +597,53 @@ def init_db():
     )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_my_employees_name ON my_employees(full_name)")
+    conn.commit()
+
+    # ─── Программа максимум (ПМ) ──────────────────────────────────────────────
+    # Отдельный от финплана СЦ источник: выгрузка ПЦ в разрезе решений. Каждая загрузка
+    # хранится целиком, историю изменений по строкам тут не ведём — ценность в сверке
+    # загрузки с fp_rows и с предыдущей загрузкой. Разбор файла — app/pm_parser.py.
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS pm_imports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        filename TEXT NOT NULL,
+        report_label TEXT,
+        strategic_filter TEXT,
+        imported_by INTEGER REFERENCES users(id),
+        imported_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        rows_total INTEGER DEFAULT 0,
+        source_rows INTEGER DEFAULT 0,
+        quarters TEXT
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS pm_rows (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        import_id INTEGER NOT NULL REFERENCES pm_imports(id) ON DELETE CASCADE,
+        client_name TEXT,
+        contract_num TEXT,
+        findoc TEXT,
+        presale TEXT,
+        pc TEXT,
+        section TEXT,
+        solution TEXT,
+        strategic_solution TEXT,
+        direction TEXT,
+        share REAL,
+        manager TEXT,
+        kt TEXT,
+        directorate TEXT,
+        total_amount REAL DEFAULT 0,
+        forecast_amount REAL DEFAULT 0,
+        quarter_label TEXT,
+        kind TEXT,
+        amount REAL NOT NULL DEFAULT 0
+    )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_pm_rows_import ON pm_rows(import_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_pm_rows_quarter ON pm_rows(import_id, quarter_label)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_pm_rows_client ON pm_rows(import_id, client_name)")
     conn.commit()
 
     # Миграция: если ts_rows содержит старую колонку row_level — пересоздаём таблицы

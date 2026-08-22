@@ -193,8 +193,9 @@
         <summary style="font-size:11px; color:var(--ink-400); cursor:pointer; user-select:none">Корректировка факта…</summary>
         <form method="POST" action="{{ url_for('save_fact_correction') }}" style="margin-top:6px; display:flex; flex-direction:column; gap:5px">
           <input type="hidden" name="quarter_label" value="{{ correction_quarter }}">
-          <input type="number" name="correction_amount" value="{{ current_q_correction|int }}"
-                 step="1000" placeholder="±сумма, ₽"
+          <input type="text" name="correction_amount" class="js-amount" inputmode="numeric"
+                 value="{{ "{:,.0f}".format(current_q_correction).replace(',', ' ') if current_q_correction else '' }}"
+                 placeholder="±сумма, ₽"
                  style="font-size:12px; padding:3px 6px; border:1px solid var(--ink-200); border-radius:4px; width:100%">
           <input type="text" name="correction_note" value="{{ current_q_correction_note }}"
                  placeholder="Примечание (необязательно)"
@@ -300,7 +301,11 @@
 
 <div class="card section-block">
   <div class="section-title">Целевая сумма периода</div>
-  <div class="subtitle" style="margin-bottom:10px">Считается по всем разделам, включая Сопровождение и TaaS</div>
+  <div class="subtitle" style="margin-bottom:10px">
+    Считается по всем разделам, включая Сопровождение и TaaS.
+    Цель привязана к {{ 'финансовому году' if target_mode == 'fy' else 'кварталу' }} и не сбивается при смене вида и составе месяцев в файле.
+    {% if target_is_derived %}<br>Своя цель на финансовый год не задана — показана сумма целей его кварталов; введённое здесь значение сохранится как цель ФГ.{% endif %}
+  </div>
   {% if target_amount %}
     <div class="grid-2" style="align-items:center">
       <div>
@@ -316,7 +321,8 @@
         <form method="POST" action="{{ url_for('set_target') }}" style="display:flex; gap:8px; align-items:flex-end;">
           <div class="form-group" style="margin-bottom:0; flex:1">
             <label>Изменить целевую сумму</label>
-            <input type="text" name="target_amount" value="{{ target_amount|int }}">
+            <input type="text" name="target_amount" class="js-amount" inputmode="numeric"
+                   value="{{ "{:,.0f}".format(target_amount).replace(',', ' ') }}">
           </div>
           <button class="btn btn-sm btn-primary" type="submit">Сохранить</button>
         </form>
@@ -352,7 +358,8 @@
     {% if current_user_role == 'owner' %}
     <form method="POST" action="{{ url_for('set_target') }}" style="display:flex; gap:8px; max-width:400px;">
       <div class="form-group" style="margin-bottom:0; flex:1">
-        <input type="text" name="target_amount" placeholder="Например: 120000000">
+        <input type="text" name="target_amount" class="js-amount" inputmode="numeric"
+               placeholder="Например: 120 000 000">
       </div>
       <button class="btn btn-primary" type="submit">Задать цель</button>
     </form>
@@ -388,6 +395,33 @@
     </tbody>
   </table>
 </div>
+
+{% if by_strategic %}
+<div class="card section-block">
+  <div class="section-title">Разбивка по блокам стратегии</div>
+  <table>
+    <thead><tr><th>Стратегическое решение</th><th class="num">Строк</th><th class="num">Факт</th><th class="num">0‑100</th><th class="num">Возможности</th></tr></thead>
+    <tbody>
+      <tr style="font-weight:700; background:var(--ink-100);">
+        <td>Итого</td>
+        <td class="num">{{ by_strategic.values() | map(attribute='rows') | sum }}</td>
+        <td class="num">{{ "{:,.0f}".format(strategic_totals.get('Факт',0)).replace(',', ' ') }} ₽</td>
+        <td class="num">{{ "{:,.0f}".format(strategic_totals.get('0-100',0)).replace(',', ' ') }} ₽</td>
+        <td class="num">{{ "{:,.0f}".format(strategic_totals.get('Возможности',0)).replace(',', ' ') }} ₽</td>
+      </tr>
+      {% for sol, vals in by_strategic.items() %}
+      <tr>
+        <td>{{ sol }}</td>
+        <td class="num">{{ vals.get('rows', 0) }}</td>
+        <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', strategic=[sol], portfolio=['Факт']) }}">{{ "{:,.0f}".format(vals.get('Факт',0)).replace(',', ' ') }} ₽</a></td>
+        <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', strategic=[sol], portfolio=['0-100']) }}">{{ "{:,.0f}".format(vals.get('0-100',0)).replace(',', ' ') }} ₽</a></td>
+        <td class="num"><a href="{{ url_for('rows_list', view='detail', sort='amount_0_100', dir='desc', strategic=[sol], portfolio=['Возможности']) }}">{{ "{:,.0f}".format(vals.get('Возможности',0)).replace(',', ' ') }} ₽</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 
 <div class="card section-block">
   <div class="section-title">Прогресс выполнения периода</div>

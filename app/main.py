@@ -28,6 +28,8 @@ from app.db import (
 from app.importer import import_excel
 from app.stt import transcribe, SttError
 from app.ts_parser import parse_ts_file, parse_employees_file
+from app.pm_parser import parse_workbook as parse_pm_workbook
+from app import pm_service
 
 BASE_DIR = Path(__file__).parent
 UPLOAD_DIR = BASE_DIR / "data" / "uploads"
@@ -1151,6 +1153,107 @@ def get_default_view_quarter(conn):
     return get_setting(conn, "current_quarter_label") or compute_quarter_label(datetime.date.today())
 
 
+def parse_amount(text):
+    """Сумма из поля ввода: «151 000 000», «151000000,50», «-1 200» → float.
+
+    Разделители разрядов приходят из поля с форматированием (class="js-amount"), причём
+    пробел может оказаться неразрывным или узким — вычищаем любые пробельные символы.
+    Бросает ValueError, если распарсить нечего.
+    """
+    return float(re.sub(r"\s", "", (text or ""), flags=re.UNICODE).replace(",", "."))
+
+
+def target_key(vqls, mode):
+    """Ключ, под которым хранится целевая сумма периода.
+
+    Раньше ключом был перечень месяцев («Июль-Август-Сентябрь»), и цель терялась дважды:
+    при переключении вида квартал ↔ финансовый год и при любом изменении состава месяцев в
+    данных (например, в файле появились строки на октябрь). Теперь ключ — сама метка периода:
+    «2026-Q3» для квартала и «FY2026» для финансового года.
+    """
+    if mode == "fy" and vqls:
+        fy_key, _, _ = calendar_to_fiscal(vqls[0])
+        return fy_key
+    return vqls[0] if vqls else "период"
+
+
+def read_target(conn, vqls, mode):
+    """Целевая сумма периода. Возвращает (amount, key, is_derived).
+
+    is_derived=True — цель на финансовый год не задана явно и собрана как сумма целей
+    его кварталов; такую сумму показываем, но перезаписывать её не считаем изменением ФГ.
+    """
+    key = target_key(vqls, mode)
+    row = conn.execute(
+        "SELECT target_amount FROM quarter_targets WHERE period_label = ?", (key,)
+    ).fetchone()
+    if row:
+        return row["target_amount"], key, False
+    if mode == "fy" and vqls:
+        ph = ",".join("?" * len(vqls))
+        agg = conn.execute(
+            f"SELECT SUM(target_amount) AS total FROM quarter_targets WHERE period_label IN ({ph})",
+            vqls,
+        ).fetchone()
+        if agg and agg["total"]:
+            return agg["total"], key, True
+    return None, key, False
+
+
+def migrate_target_keys(conn):
+    """Переносит цели со старого ключа-перечня месяцев на метку периода. Идемпотентна.
+
+    Год по названиям месяцев не восстановить, поэтому старый ключ сопоставляется с кварталом
+    через сами данные: для каждого quarter_label берём месяцы его активных строк и собираем
+    такую же строку, какой раньше был ключ. Что не сопоставилось — оставляем как есть,
+    чтобы ничего не потерять.
+    """
+    if get_setting(conn, "target_key_v2"):
+        return 0
+
+    legacy = conn.execute(
+        "SELECT id, period_label, target_amount FROM quarter_targets"
+    ).fetchall()
+    legacy = [r for r in legacy if not re.fullmatch(r"\d{4}-Q[1-4]|FY\d{4}", r["period_label"] or "")]
+
+    moved = 0
+    if legacy:
+        quarters = [r["quarter_label"] for r in conn.execute(
+            "SELECT DISTINCT quarter_label FROM fp_rows WHERE quarter_label IS NOT NULL AND quarter_label != ''"
+        ).fetchall()]
+        # старый ключ → метка квартала
+        by_legacy_label = {}
+        for ql in quarters:
+            months, _, _ = get_period_info([ql], conn=conn)
+            if months:
+                by_legacy_label["-".join(months)] = ql
+        # старый ключ финансового года — те же месяцы, но по всем кварталам ФГ сразу
+        for ql in quarters:
+            fy_key, _, _ = calendar_to_fiscal(ql)
+            fy_quarters = fiscal_year_quarters(fy_key)
+            months, _, _ = get_period_info(fy_quarters, conn=conn)
+            if months:
+                by_legacy_label.setdefault("-".join(months), fy_key)
+
+        for row in legacy:
+            new_key = by_legacy_label.get(row["period_label"])
+            if not new_key:
+                continue
+            exists = conn.execute(
+                "SELECT 1 FROM quarter_targets WHERE period_label = ?", (new_key,)
+            ).fetchone()
+            if exists:
+                continue
+            conn.execute(
+                "UPDATE quarter_targets SET period_label = ? WHERE id = ?", (new_key, row["id"])
+            )
+            moved += 1
+
+    set_setting(conn, "target_key_v2", "1")
+    conn.commit()
+    return moved
+
+
 def get_view_context(conn):
     """Возвращает (quarter_labels: list, mode: str) для текущего сеанса.
 
@@ -1377,6 +1480,9 @@ def dashboard():
 
     summary = {"Факт": 0.0, "0-100": 0.0, "Возможности": 0.0}
     by_section = {}
+    # Разрез по блокам стратегии («Стратегическое решение» в выгрузке ФП). Останется пустым,
+    # если загружен файл старого формата — там такой колонки нет.
+    by_strategic = {}
     focus_summary = {"0-100": 0.0, "Возможности": 0.0}
     support_by_client = {}
     risk_sums = {1: 0.0, 2: 0.0, 3: 0.0}
@@ -1387,6 +1493,12 @@ def dashboard():
         sec = r["section"] or "Без раздела"
         by_section.setdefault(sec, {"Факт": 0.0, "0-100": 0.0, "Возможности": 0.0})
         by_section[sec][p] = by_section[sec].get(p, 0.0) + (r["amount_0_100"] or 0)
+
+        strategic = (r["strategic_solution"] or "").strip()
+        if strategic:
+            d = by_strategic.setdefault(strategic, {"Факт": 0.0, "0-100": 0.0, "Возможности": 0.0, "rows": 0})
+            d[p] = d.get(p, 0.0) + (r["amount_0_100"] or 0)
+            d["rows"] += 1
 
         # Фокус работы: 0‑100 и Возможности по Проекты/Заказные доработки/Лицензии
         if sec in FOCUS_SECTIONS and p in focus_summary:
@@ -1410,6 +1522,18 @@ def dashboard():
         "Факт": sum(v.get("Факт", 0) for v in by_section.values()),
         "0-100": sum(v.get("0-100", 0) for v in by_section.values()),
         "Возможности": sum(v.get("Возможности", 0) for v in by_section.values()),
+    }
+
+    # Сортируем блоки стратегии по «Факт + 0-100 + Возможности» — крупные сверху.
+    by_strategic = dict(sorted(
+        by_strategic.items(),
+        key=lambda kv: kv[1]["Факт"] + kv[1]["0-100"] + kv[1]["Возможности"],
+        reverse=True,
+    ))
+    strategic_totals = {
+        "Факт": sum(v["Факт"] for v in by_strategic.values()),
+        "0-100": sum(v["0-100"] for v in by_strategic.values()),
+        "Возможности": sum(v["Возможности"] for v in by_strategic.values()),
     }
 
     support_by_client = dict(sorted(support_by_client.items()))
@@ -1508,10 +1632,7 @@ def dashboard():
     risky_rows = [r for r in risky_rows if (r["amount_0_100"] or 0) >= 300000]
 
     period_label = "-".join(months) if months else "период"
-    target_row = conn.execute(
-        "SELECT * FROM quarter_targets WHERE period_label = ?", (period_label,)
-    ).fetchone()
-    target_amount = target_row["target_amount"] if target_row else None
+    target_amount, _target_key, target_is_derived = read_target(conn, vqls, _mode)
 
     # Ручная корректировка факта (последний день периода без нового файла).
     # Суммируем по всем кварталам текущего вида (обычно 1, но при просмотре ФГ — до 4).
@@ -1551,10 +1672,12 @@ def dashboard():
     return render_template(
         "dashboard.html",
         summary=summary, by_section=by_section, section_totals=section_totals,
+        by_strategic=by_strategic, strategic_totals=strategic_totals,
         overdue=overdue, due_soon=due_soon,
         risky_rows=risky_rows, qnum=qnum, months=months, outlier_months=outlier_months,
         total_rows=len(rows), period_label=period_label,
         target_amount=target_amount, target_pct=target_pct, achieved=achieved,
+        target_is_derived=target_is_derived, target_mode=_mode,
         gap_after_fact=gap_after_fact, gap_after_0100=gap_after_0100, gap_after_opportunities=gap_after_opportunities,
         clients=clients, filter_client=filter_client, filter_responsible=filter_responsible,
         team_lead_sections=TEAM_LEAD_SECTIONS, owner_sections=OWNER_SECTIONS,
@@ -1717,9 +1840,10 @@ def save_fact_correction():
     if not q or "-Q" not in q:
         flash("Не указан квартал для корректировки", "error")
         return redirect(url_for("dashboard"))
-    amount_str = request.form.get("correction_amount", "0").strip().replace(" ", "").replace(",", ".")
+    amount_str = request.form.get("correction_amount", "0").strip()
     try:
-        amount = float(amount_str)
+        # Пустое поле — это снятие корректировки, а не ошибка ввода.
+        amount = parse_amount(amount_str) if amount_str else 0.0
     except ValueError:
         flash("Некорректная сумма корректировки", "error")
         return redirect(url_for("dashboard"))
@@ -1738,27 +1862,32 @@ def save_fact_correction():
 @login_required
 @owner_required
 def set_target():
+    # Соединение держим открытым до записи цели: закрывать его сразу после get_view_context
+    # нельзя — дальше по этому же conn идёт INSERT (иначе «Cannot operate on a closed database»).
     conn = get_conn()
-    vqls, _ = get_view_context(conn)
-    conn.close()
-    months, qnum, outlier_months = get_period_info(vqls)
-    period_label = "-".join(months) if months else "период"
-    amount = request.form.get("target_amount", "").strip().replace(" ", "").replace(",", ".")
     try:
-        amount_val = float(amount)
-    except ValueError:
-        flash("Введите корректную сумму", "error")
-        return redirect(url_for("dashboard"))
+        vqls, mode = get_view_context(conn)
+        key = target_key(vqls, mode)
+        try:
+            amount_val = parse_amount(request.form.get("target_amount", ""))
+        except ValueError:
+            flash("Введите корректную сумму", "error")
+            return redirect(url_for("dashboard"))
 
-    conn.execute("""
-        INSERT INTO quarter_targets (period_label, target_amount, set_by, updated_at)
-        VALUES (?,?,?,CURRENT_TIMESTAMP)
-        ON CONFLICT(period_label) DO UPDATE SET target_amount=excluded.target_amount,
-            set_by=excluded.set_by, updated_at=CURRENT_TIMESTAMP
-    """, (period_label, amount_val, session["user_id"]))
-    conn.commit()
-    conn.close()
-    flash("Целевая сумма квартала обновлена", "success")
+        conn.execute("""
+            INSERT INTO quarter_targets (period_label, target_amount, set_by, updated_at)
+            VALUES (?,?,?,CURRENT_TIMESTAMP)
+            ON CONFLICT(period_label) DO UPDATE SET target_amount=excluded.target_amount,
+                set_by=excluded.set_by, updated_at=CURRENT_TIMESTAMP
+        """, (key, amount_val, session["user_id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    if mode == "fy":
+        _, fy_label, _ = calendar_to_fiscal(vqls[0])
+        flash(f"Целевая сумма на {fy_label} обновлена", "success")
+    else:
+        flash(f"Целевая сумма на {key} обновлена", "success")
     return redirect(url_for("dashboard"))
 
 
@@ -2441,6 +2570,7 @@ def rows_list():
     portfolio = request.args.getlist("portfolio")
     manager = request.args.getlist("manager")
     client = request.args.getlist("client")
+    strategic = request.args.getlist("strategic")
     search = request.args.get("q", "")
     only_unassigned = request.args.get("unassigned") == "1"
     agg_sort = request.args.get("asort", "total")
@@ -2486,6 +2616,9 @@ def rows_list():
     if client:
         query += f" AND f.client_name IN ({','.join('?' * len(client))})"
         params += client
+    if strategic:
+        query += f" AND f.strategic_solution IN ({','.join('?' * len(strategic))})"
+        params += strategic
     if risk_level:
         query += f" AND f.risk_level IN ({','.join('?' * len(risk_level))})"
         params += risk_level
@@ -2538,11 +2671,12 @@ def rows_list():
 
     # Дропдауны фильтров — берём из уже загруженных строк (без дополнительных запросов к БД).
     # При активном section/client/manager-фильтре дополнительно подгружаем все доступные значения.
-    _all_rows_q = f"SELECT section, client_name, project_manager FROM fp_rows WHERE is_active=1 AND quarter_label IN ({ql_ph})"
+    _all_rows_q = f"SELECT section, client_name, project_manager, strategic_solution FROM fp_rows WHERE is_active=1 AND quarter_label IN ({ql_ph})"
     _all_rows = conn.execute(_all_rows_q, vqls).fetchall()
     _sections_set  = sorted({r["section"]         for r in _all_rows if r["section"]},         key=str)
     _clients_set   = sorted({r["client_name"]      for r in _all_rows if r["client_name"]},     key=str)
     _managers_set  = sorted({r["project_manager"]  for r in _all_rows if r["project_manager"]}, key=str)
+    _strategic_set = sorted({r["strategic_solution"] for r in _all_rows if r["strategic_solution"]}, key=str)
 
     # Агрегированный вид: аккордеон по клиентам (client → sections → rows)
     client_accordion = None
@@ -2613,16 +2747,8 @@ def rows_list():
         "SELECT * FROM saved_filters WHERE user_id = ? ORDER BY created_at DESC", (session["user_id"],)
     ).fetchall()
 
-    # Целевой план квартала для блока сравнения
-    agg_target_amount = None
-    if months:
-        period_label_agg = "-".join(months)
-        trow = conn.execute(
-            "SELECT target_amount FROM quarter_targets WHERE period_label = ?",
-            (period_label_agg,),
-        ).fetchone()
-        if trow:
-            agg_target_amount = trow["target_amount"]
+    # Целевой план периода для блока сравнения
+    agg_target_amount, _, _ = read_target(conn, vqls, _mode)
 
     conn.close()
     return render_template(
@@ -2630,9 +2756,10 @@ def rows_list():
         sections=_sections_set,
         clients=_clients_set,
         managers=_managers_set,
+        strategics=_strategic_set,
         saved_filters=saved_filters, current_query_string=current_query_string,
         filters=dict(section=section, portfolio=portfolio, manager=manager, q=search,
-                     unassigned=only_unassigned, client=client,
+                     unassigned=only_unassigned, client=client, strategic=strategic,
                      risk_level=risk_level, dpa_from=dpa_from, dpa_to=dpa_to),
         owner_sections=OWNER_SECTIONS, team_lead_sections=TEAM_LEAD_SECTIONS,
         today=datetime.date.today().isoformat(),
@@ -4372,6 +4499,136 @@ def ts_export_less_mine():
         flash("Выберите период для выгрузки", "error")
         return redirect(url_for("timesheets"))
     return _ts_export_block(import_id, "less-mine")
+
+
+# ─── Программа максимум ───────────────────────────────────────────────────────
+
+@app.route("/pm", methods=["GET", "POST"])
+@login_required
+def pm_view():
+    """Программа максимум: сводка по стратрешению и сверка с финпланом из СЦ."""
+    if request.method == "POST":
+        if session.get("role") != "owner":
+            flash("Загружать файлы ПМ может только владелец портала", "error")
+            return redirect(url_for("pm_view"))
+        file = request.files.get("file")
+        if not file or not file.filename.endswith(".xlsx"):
+            flash("Пожалуйста, выберите файл .xlsx («ПМ ПЦ_Решения к …»)", "error")
+            return redirect(url_for("pm_view"))
+        fname = secure_filename(file.filename)
+        path = UPLOAD_DIR / fname
+        file.save(path)
+        try:
+            parsed = parse_pm_workbook(str(path))
+        except Exception as e:                      # причину показываем пользователю как есть
+            flash(f"Не смог разобрать файл ПМ: {e}", "error")
+            return redirect(url_for("pm_view"))
+
+        import_id = pm_service.save_import(
+            parsed, fname, session["user_id"], report_label=request.form.get("report_label", "").strip()
+        )
+        quarters = ", ".join(
+            f"{q['fq_label']} → {q['quarter_label']}" for q in parsed["quarters"]
+        )
+        flash(
+            f"Файл ПМ загружен: строк файла {parsed['meta']['source_rows']}, "
+            f"записей по кварталам {len(parsed['rows'])}. Кварталы: {quarters}",
+            "success",
+        )
+        return redirect(url_for("pm_view", import_id=import_id))
+
+    conn = get_conn()
+    imports = pm_service.list_imports(conn)
+    imp = pm_service.get_import(conn, request.args.get("import_id", type=int))
+
+    if not imp:
+        conn.close()
+        return render_template("pm.html", imports=imports, imp=None)
+
+    strategic = request.args.get("strategic")
+    if strategic is None:
+        strategic = get_setting(conn, "pm_strategic_filter") or "Custody"
+    strategic = strategic.strip()
+    if request.args.get("strategic") is not None:
+        set_setting(conn, "pm_strategic_filter", strategic)
+        conn.commit()
+
+    quarters = pm_service.import_quarters(imp)
+    quarter_labels = [q["quarter_label"] for q in quarters]
+    quarter = request.args.get("quarter") or ""
+    if quarter not in quarter_labels:
+        # по умолчанию — квартал, который сейчас смотрим в финплане, иначе первый из файла
+        view_q = get_view_quarter(conn)
+        quarter = view_q if view_q in quarter_labels else (quarter_labels[0] if quarter_labels else "")
+
+    threshold = request.args.get("threshold", type=float)
+    if threshold is None:
+        threshold = pm_service.DEFAULT_THRESHOLD
+
+    # Чем блок «деньги под другими решениями» отличается от чужих денег того же банка —
+    # решает список ключевых слов; храним его в настройках, чтобы не набирать каждый раз.
+    related = request.args.get("related")
+    if related is None:
+        related = get_setting(conn, "pm_related_keywords")
+    if related is None:
+        related = ", ".join(pm_service.DEFAULT_RELATED_KEYWORDS)
+    if request.args.get("related") is not None:
+        set_setting(conn, "pm_related_keywords", related)
+        conn.commit()
+
+    summary = pm_service.summary(conn, imp["id"], strategic=strategic, quarter=quarter)
+    comparison = pm_service.client_comparison(
+        conn, imp["id"], quarter, strategic=strategic, threshold=threshold
+    )
+    others = pm_service.other_solutions(
+        conn, imp["id"], quarter, strategic, keywords=related.split(",")
+    )
+
+    selected_client = request.args.get("client") or ""
+    details = []
+    if selected_client:
+        details = pm_service.client_details(
+            conn, imp["id"], quarter, selected_client, strategic=strategic
+        )
+
+    fp_present = bool(conn.execute(
+        "SELECT 1 FROM fp_rows WHERE is_active = 1 AND quarter_label = ? LIMIT 1", (quarter,)
+    ).fetchone())
+
+    status_totals = Counter()
+    delta_totals = {"pm": 0.0, "fp": 0.0}
+    for row in comparison:
+        status_totals[row["status"]] += 1
+        delta_totals["pm"] += row["pm_total"]
+        delta_totals["fp"] += row["fp_0_100"]
+
+    strategic_list = pm_service.strategic_options(conn, imp["id"])
+    conn.close()
+    return render_template(
+        "pm.html",
+        imports=imports, imp=imp,
+        strategic=strategic,
+        strategic_list=strategic_list,
+        quarters=quarters, quarter=quarter,
+        threshold=threshold, related=related,
+        summary=summary, comparison=comparison, others=others,
+        selected_client=selected_client, details=details,
+        fp_present=fp_present,
+        status_totals=status_totals, delta_totals=delta_totals,
+    )
+
+
+@app.route("/pm/<int:import_id>/delete", methods=["POST"])
+@login_required
+@owner_required
+def pm_delete(import_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM pm_rows WHERE import_id = ?", (import_id,))
+    conn.execute("DELETE FROM pm_imports WHERE id = ?", (import_id,))
+    conn.commit()
+    conn.close()
+    flash("Загрузка ПМ удалена", "success")
+    return redirect(url_for("pm_view"))
 
 
 if __name__ == "__main__":
